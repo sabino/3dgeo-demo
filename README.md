@@ -1,15 +1,17 @@
 # 3Dgeo
 
-Minimal Neo Geo/ngdevkit project that draws a static cube on the FIX layer using generated shade tiles:
+Minimal Neo Geo/ngdevkit project that draws a rotating cube on the FIX layer using generated shade tiles:
 
 - light shade: `░`
 - medium shade: `▒`
 - dark shade: `▓`
 - full block: `█`
 
-The shade glyphs are represented as 8x8 FIX tiles in S-ROM. For now the render is black ink on a white tile background, using a readable 40x28 visible source-art matrix in `src/main.c`.
+The shade glyphs are represented as 8x8 FIX tiles in S-ROM. The cube renderer treats each FIX cell as a tiny dithered pixel: the tile selects the coverage pattern, while the upper FIX palette bits select the lighting level.
 
-`cube.txt` is the 40x20 reference art. The runtime matrix pads it to the Neo Geo visible FIX area of 40x28 cells.
+The visible FIX area used here is 40x28 cells. The full FIX map is 40x32 cells, with the top and bottom two rows hidden on NTSC displays.
+
+`cube.txt` is kept as the 40x20 static reference art from the first pass.
 
 ## Build
 
