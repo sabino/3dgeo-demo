@@ -12,8 +12,8 @@ FIX_COLS = 40
 FIX_VISIBLE_ROWS = 28
 FIX_VISIBLE_ROW_OFFSET = 2
 CELL_COUNT = FIX_COLS * FIX_VISIBLE_ROWS
-YAW_STEPS = 32
-PITCH_STEPS = 8
+YAW_STEPS = 16
+PITCH_STEPS = 16
 FRAME_COUNT = YAW_STEPS * PITCH_STEPS
 START_YAW = 0
 START_PITCH = PITCH_STEPS // 2
@@ -29,8 +29,6 @@ CUBE_RADIUS = 120.0
 CAMERA_DISTANCE = 700.0
 PROJECT_SCALE_X = 46.0
 PROJECT_SCALE_Y = 38.0
-PITCH_MIN = -0.70
-PITCH_MAX = 0.70
 
 TILE_BLANK = 0
 TILE_LIGHT = 1
@@ -165,7 +163,7 @@ def draw_line(frame: list[list[int]], x0: int, y0: int, x1: int, y1: int, word: 
 def render_frame(yaw_index: int, pitch_index: int) -> list[int]:
     frame = [[BLANK_WORD for _ in range(FIX_COLS)] for _ in range(FIX_VISIBLE_ROWS)]
     yaw = (math.tau * yaw_index) / YAW_STEPS
-    pitch = PITCH_MIN + ((PITCH_MAX - PITCH_MIN) * pitch_index) / (PITCH_STEPS - 1)
+    pitch = (math.tau * pitch_index) / PITCH_STEPS
 
     verts = [project(rotate_vec(v, pitch, yaw)) for v in VERTICES]
     normals = [rotate_vec(normal, pitch, yaw) for _, normal in FACES]
@@ -198,6 +196,25 @@ def metric(frames: list[list[int]], pitch: int, yaw: int) -> list[int]:
     return frames[pitch * YAW_STEPS + yaw]
 
 
+def max_adjacent_changes(frames: list[list[int]]) -> tuple[int, int, int, int]:
+    initial = changed_cells([BLANK_WORD] * CELL_COUNT, frames[START_FRAME])
+    yaw = 0
+    pitch = 0
+    for pitch_index in range(PITCH_STEPS):
+        for yaw_index in range(YAW_STEPS):
+            yaw = max(yaw, changed_cells(
+                metric(frames, pitch_index, yaw_index),
+                metric(frames, pitch_index, (yaw_index + 1) % YAW_STEPS),
+            ))
+    for pitch_index in range(PITCH_STEPS):
+        for yaw_index in range(YAW_STEPS):
+            pitch = max(pitch, changed_cells(
+                metric(frames, pitch_index, yaw_index),
+                metric(frames, (pitch_index + 1) % PITCH_STEPS, yaw_index),
+            ))
+    return initial, yaw, pitch, max(yaw, pitch)
+
+
 def updates_between(a: list[int], b: list[int]) -> list[int]:
     updates: list[int] = []
     for cell, (av, bv) in enumerate(zip(a, b)):
@@ -209,34 +226,15 @@ def updates_between(a: list[int], b: list[int]) -> list[int]:
     return updates
 
 
-def max_adjacent_changes(frames: list[list[int]]) -> tuple[int, int, int, int]:
-    initial = changed_cells([BLANK_WORD] * CELL_COUNT, frames[START_FRAME])
-    yaw = 0
-    pitch = 0
-    for pitch_index in range(PITCH_STEPS):
-        for yaw_index in range(YAW_STEPS):
-            yaw = max(yaw, changed_cells(
-                metric(frames, pitch_index, yaw_index),
-                metric(frames, pitch_index, (yaw_index + 1) % YAW_STEPS),
-            ))
-    for pitch_index in range(PITCH_STEPS - 1):
-        for yaw_index in range(YAW_STEPS):
-            pitch = max(pitch, changed_cells(
-                metric(frames, pitch_index, yaw_index),
-                metric(frames, pitch_index + 1, yaw_index),
-            ))
-    return initial, yaw, pitch, max(yaw, pitch)
-
-
 def target_for_direction(yaw: int, pitch: int, direction: int) -> tuple[int, int]:
     if direction == DIR_LEFT:
         return (yaw - 1) % YAW_STEPS, pitch
     if direction == DIR_RIGHT:
         return (yaw + 1) % YAW_STEPS, pitch
     if direction == DIR_UP:
-        return yaw, max(pitch - 1, 0)
+        return yaw, (pitch - 1) % PITCH_STEPS
     if direction == DIR_DOWN:
-        return yaw, min(pitch + 1, PITCH_STEPS - 1)
+        return yaw, (pitch + 1) % PITCH_STEPS
     return yaw, pitch
 
 
@@ -260,7 +258,7 @@ def build_transitions(frames: list[list[int]]) -> tuple[list[list[int]], list[li
     return offsets, counts, updates
 
 
-def c_u16_array(name: str, values: list[int], per_line: int = 10) -> list[str]:
+def c_u16_array(name: str, values: list[int], per_line: int = 8) -> list[str]:
     lines = [f"static const u16 {name}[{len(values)}] = {{"]
     for i in range(0, len(values), per_line):
         chunk = values[i : i + per_line]
@@ -325,13 +323,13 @@ def main() -> int:
         "",
     ]
 
-    lines.extend(c_u16_array("cube_start_updates", start_updates, 8))
+    lines.extend(c_u16_array("cube_start_updates", start_updates))
     lines.append("")
     write_u32_table(lines, "cube_step_offsets", offsets)
     lines.append("")
     write_u16_table(lines, "cube_step_counts", counts)
     lines.append("")
-    lines.extend(c_u16_array("cube_step_updates", updates, 8))
+    lines.extend(c_u16_array("cube_step_updates", updates))
 
     lines.extend(["", "#endif"])
     out.write_text("\n".join(lines) + "\n", encoding="ascii")

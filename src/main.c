@@ -81,14 +81,15 @@ static u8 update_angles(u8 input, u8 *yaw, u8 *pitch) {
         *yaw = (u8)((*yaw + 1) & (CUBE_YAW_STEPS - 1));
         return CUBE_DIR_RIGHT;
     }
-    if ((input & CNT_UP) && *pitch > 0) {
-        *pitch = (u8)(*pitch - 1);
+    if (input & CNT_UP) {
+        *pitch = (u8)((*pitch + CUBE_PITCH_STEPS - 1) & (CUBE_PITCH_STEPS - 1));
         return CUBE_DIR_UP;
     }
-    if ((input & CNT_DOWN) && *pitch < CUBE_PITCH_STEPS - 1) {
-        *pitch = (u8)(*pitch + 1);
+    if (input & CNT_DOWN) {
+        *pitch = (u8)((*pitch + 1) & (CUBE_PITCH_STEPS - 1));
         return CUBE_DIR_DOWN;
     }
+
     return NO_DIRECTION;
 }
 
