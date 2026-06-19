@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate four 8x8 FIX tiles that approximate light/medium/dark/full shade."""
+"""Generate blank plus light/medium/dark/full 8x8 FIX tiles."""
 
 from __future__ import annotations
 
@@ -10,15 +10,17 @@ from PIL import Image
 
 
 TILE_SIZE = 8
-TILE_COUNT = 4
+TILE_COUNT = 5
 
 
 def pixel_on(tile: int, x: int, y: int) -> bool:
     if tile == 0:
-        return (x + y) % 4 == 0
+        return False
     if tile == 1:
-        return (x + y) % 2 == 0
+        return (x + y) % 4 == 0
     if tile == 2:
+        return (x + y) % 2 == 0
+    if tile == 3:
         return (x + y) % 4 != 0
     return True
 
