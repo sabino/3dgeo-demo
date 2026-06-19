@@ -5,6 +5,7 @@ GAMETITLE := 3Dgeo FIX shade wallpaper
 BUILDDIR := build
 ROM := $(BUILDDIR)/rom
 ASSETDIR := $(BUILDDIR)/assets
+GENDIR := $(BUILDDIR)/generated
 
 M68KGCC ?= m68k-neogeo-elf-gcc
 M68KOBJCOPY ?= m68k-neogeo-elf-objcopy
@@ -14,6 +15,7 @@ PYTHON ?= python3
 TILETOOL ?= tiletool.py
 ROMTOOL ?= romtool.py
 GNGEO ?= ngdevkit-gngeo
+GNGEO_P1CONTROL ?= A=K122,B=K120,C=K97,D=K115,START=K49,COIN=K51,UP=K82,DOWN=K81,LEFT=K80,RIGHT=K79,MENU=K27
 
 NGCFLAGS := $(shell $(PKGCONFIG) --cflags ngdevkit 2>/dev/null)
 NGLDFLAGS := $(shell $(PKGCONFIG) --libs ngdevkit 2>/dev/null)
@@ -21,7 +23,7 @@ NGSHAREDIR := $(shell $(PKGCONFIG) --variable=sharedir ngdevkit 2>/dev/null)
 GNGEO_DATA := /usr/share/ngdevkit-gngeo/gngeo_data.zip
 
 CFLAGS ?= -std=c99 -fomit-frame-pointer -O2 -g -Wall -Wextra
-CFLAGS += $(NGCFLAGS) -Isrc
+CFLAGS += $(NGCFLAGS) -Isrc -I$(GENDIR)
 LDFLAGS += $(NGLDFLAGS)
 
 PROMSIZE := 1048576
@@ -41,7 +43,7 @@ CART := $(ROM)/$(GAMEROM).zip
 GNGEO_HASH := $(ROM)/gngeo_data.zip
 MAME_HASH := $(ROM)/neogeo.xml
 
-.PHONY: all cart assets check-ngdevkit gngeo run clean distclean
+.PHONY: all cart assets generated check-ngdevkit gngeo run clean distclean
 
 all: cart
 
@@ -56,7 +58,9 @@ check-ngdevkit:
 
 assets: $(SROM1)
 
-$(BUILDDIR) $(ROM) $(ASSETDIR):
+generated: $(GENDIR)/cube_frames.h
+
+$(BUILDDIR) $(ROM) $(ASSETDIR) $(GENDIR):
 	mkdir -p $@
 
 $(ASSETDIR)/shade-fix.gif: tools/make_fix_tiles.py | $(ASSETDIR)
@@ -64,6 +68,11 @@ $(ASSETDIR)/shade-fix.gif: tools/make_fix_tiles.py | $(ASSETDIR)
 
 $(ASSETDIR)/shade-fix.fix: $(ASSETDIR)/shade-fix.gif
 	$(TILETOOL) --fix -c $< -o $@
+
+$(GENDIR)/cube_frames.h: tools/make_cube_frames.py | $(GENDIR)
+	$(PYTHON) $< $@
+
+$(BUILDDIR)/main.o: $(GENDIR)/cube_frames.h
 
 $(BUILDDIR)/%.o: src/%.c | $(BUILDDIR)
 	mkdir -p $(dir $@)
@@ -109,7 +118,7 @@ $(ROM)/neogeo.zip: | $(ROM)
 	cp "$(NGSHAREDIR)/neogeo.zip" $@
 
 gngeo run: cart $(ROM)/neogeo.zip
-	$(GNGEO) --scale 3 --no-resize --system home -i $(ROM) -d $(GNGEO_HASH) $(GAMEROM)
+	$(GNGEO) --scale 3 --no-resize --system home --p1control="$(GNGEO_P1CONTROL)" -i $(ROM) -d $(GNGEO_HASH) $(GAMEROM)
 
 clean:
 	find $(BUILDDIR) -type f \( -name '*.o' -o -name '*.elf' -o -name '*.ihx' -o -name '*.rel' \) -delete 2>/dev/null || true
