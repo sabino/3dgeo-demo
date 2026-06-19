@@ -5,7 +5,6 @@ GAMETITLE := 3Dgeo FIX shade wallpaper
 BUILDDIR := build
 ROM := $(BUILDDIR)/rom
 ASSETDIR := $(BUILDDIR)/assets
-GENDIR := $(BUILDDIR)/generated
 
 M68KGCC ?= m68k-neogeo-elf-gcc
 M68KOBJCOPY ?= m68k-neogeo-elf-objcopy
@@ -23,7 +22,7 @@ NGSHAREDIR := $(shell $(PKGCONFIG) --variable=sharedir ngdevkit 2>/dev/null)
 GNGEO_DATA := /usr/share/ngdevkit-gngeo/gngeo_data.zip
 
 CFLAGS ?= -std=c99 -fomit-frame-pointer -O2 -g -Wall -Wextra
-CFLAGS += $(NGCFLAGS) -Isrc -I$(GENDIR)
+CFLAGS += $(NGCFLAGS) -Isrc
 LDFLAGS += $(NGLDFLAGS)
 
 PROMSIZE := 1048576
@@ -43,7 +42,7 @@ CART := $(ROM)/$(GAMEROM).zip
 GNGEO_HASH := $(ROM)/gngeo_data.zip
 MAME_HASH := $(ROM)/neogeo.xml
 
-.PHONY: all cart assets generated check-ngdevkit gngeo run clean distclean
+.PHONY: all cart assets check-ngdevkit gngeo run clean distclean
 
 all: cart
 
@@ -58,9 +57,7 @@ check-ngdevkit:
 
 assets: $(SROM1)
 
-generated: $(GENDIR)/cube_frames.h
-
-$(BUILDDIR) $(ROM) $(ASSETDIR) $(GENDIR):
+$(BUILDDIR) $(ROM) $(ASSETDIR):
 	mkdir -p $@
 
 $(ASSETDIR)/shade-fix.gif: tools/make_fix_tiles.py | $(ASSETDIR)
@@ -68,11 +65,6 @@ $(ASSETDIR)/shade-fix.gif: tools/make_fix_tiles.py | $(ASSETDIR)
 
 $(ASSETDIR)/shade-fix.fix: $(ASSETDIR)/shade-fix.gif
 	$(TILETOOL) --fix -c $< -o $@
-
-$(GENDIR)/cube_frames.h: tools/make_cube_frames.py | $(GENDIR)
-	$(PYTHON) $< $@
-
-$(BUILDDIR)/main.o: $(GENDIR)/cube_frames.h
 
 $(BUILDDIR)/%.o: src/%.c | $(BUILDDIR)
 	mkdir -p $(dir $@)
