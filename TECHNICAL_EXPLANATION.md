@@ -201,15 +201,29 @@ The current logical atlas includes:
 - 9 dither shade tiles.
 - Paper tile.
 - Horizontal, vertical, diagonal, shallow, and steep edge masks.
+- In sprite40, fifteen 2x2 sub-cell coverage masks for partially covered cells.
 
-Sprite40 currently uses solid shade tile `TILE_SHADE_9` with palette changes for lighting. Earlier line-mask experiments produced a broken wireframe look, so the current sprite40 mode intentionally avoids edge overlays and lets face contrast define the cube.
+Sprite40 uses solid shade tile `TILE_SHADE_9` for fully covered cells and switches to `TILE_MASK_1` through `TILE_MASK_15` only at partial silhouette cells. The mask bits correspond to four sub-cell samples in the logical 40x28 framebuffer cell: top-left, top-right, bottom-left, and bottom-right. Internal face-to-face edges are forced back to full cells when the adjacent face is also visible, which avoids white holes along cube creases. Earlier line-mask experiments produced a broken wireframe look, so the current sprite40 mode still avoids global edge overlays and lets face contrast define the cube.
+
+## Sprite40 Masked-Cell Rasterization
+
+The original face filler tested only the center of each framebuffer cell. That is fast and readable, but every polygon edge moves in full-cell jumps. The sprite40 path now uses four sub-cell tests per cell:
+
+```c
+mask bit 0: x + 1/4, y + 1/4
+mask bit 1: x + 3/4, y + 1/4
+mask bit 2: x + 1/4, y + 3/4
+mask bit 3: x + 3/4, y + 3/4
+```
+
+The resulting 4-bit coverage mask directly selects one generated C-ROM tile. This is still a tile renderer, not a true pixel framebuffer, but the silhouette can now move in half-cell/quadrant steps instead of whole-cell steps. The cost is higher than the one-sample fill, so sprite40 also culls faces whose rotated normal points away from the camera. A convex cube normally draws three faces instead of all six.
 
 ## Lighting
 
-Face lighting is based on a rotated face normal and a fixed light vector:
+Face lighting is based on a rotated face normal and a fixed light vector. The non-sprite40 renderers keep the older light vector. Sprite40 uses a top-left/front vector tuned for a bright side, medium top, and dark side, closer to the original reference image:
 
 ```c
-Vec3 light = {-104, -150, -186};
+Vec3 light = {-150, 70, -150};
 intensity = dot(normal, light) >> Q;
 ```
 
@@ -221,34 +235,45 @@ PAL_FACE_0  = 0x0222
 PAL_FACE_11 = 0x0eee
 ```
 
-The renderer maps lighting intensity to a palette level:
+The renderer maps lighting intensity to a palette level and keeps full cells solid:
 
 ```c
-level = (intensity + 170) / 32
+level = ((intensity + 130) * 16) / 36
 ```
 
 Then it uses:
 
 ```c
 palette = PAL_FACE_0 + level
-tile = TILE_SHADE_9
+tile = TILE_SHADE_9 or TILE_MASK_1..TILE_MASK_15
 ```
 
 This is hardware-friendly: the tile shape stays constant while the palette determines brightness.
 
-Sprite40 also adds a cheap per-cell gradient within each face:
+Sprite40 also adds a per-face local gradient. Each face projects two local axes from its quad vertices, computes approximate local `u` and `v` coordinates per cell, and interpolates a top-left screen-light bias across the face. This avoids using one global screen-space gradient for every polygon and gives each face a more coherent light falloff:
 
 ```c
-gradient = ((FRAME_H / 2 - y) * 4) - ((x - FRAME_W / 2) * 2)
+gradient = face_local_gradient(face_axes, x, y)
 ```
 
 This gives the faces more visual variation than a single flat shade per face. It is still stylized and banded because the display resolution is only 40x28 cells, but it is closer to the reference cube than the wireframe version.
+
+## Contact Shadow
+
+Sprite40 draws a soft projected contact shadow before filling the cube faces. It estimates the cube's screen-space bounds, places a small ellipse under the lowest projected vertex, and fills it with low-density shade tiles using two very light gray shadow palettes. Cube faces are painted afterward, so the shadow naturally disappears behind the object without any extra compositing.
 
 ## Zoom
 
 Zoom is implemented as camera distance, not sprite hardware zoom:
 
 ```c
+// sprite40
+#define CAMERA_DISTANCE_DEFAULT 760
+#define CAMERA_DISTANCE_MIN 420
+#define CAMERA_DISTANCE_MAX 1300
+#define CAMERA_DISTANCE_STEP 18
+
+// fix and sprite
 #define CAMERA_DISTANCE_DEFAULT 700
 #define CAMERA_DISTANCE_MIN 360
 #define CAMERA_DISTANCE_MAX 1200
@@ -269,16 +294,17 @@ Current performance is good because:
 - Renderer writes only dirty cells.
 - Sprite columns are initialized once; per-frame updates mostly touch SCB1 cell entries.
 - Sprite40 keeps SCB2/SCB3/SCB4 stable while changing tile/palette cells.
+- Sprite40 back-face culls hidden cube faces before the more expensive four-sample masked fill.
 
 Main costs:
 
-- Per-cell point-in-quad tests.
+- Per-cell point-in-quad tests. In sprite40 this is now four sub-cell tests for visible faces.
 - Dirty comparisons over the full logical framebuffer.
 - VRAM writes for changed cells during rotation.
 
 Potential next optimizations:
 
-- Replace point-in-quad fill with scanline polygon fill.
+- Replace the masked bounding-box fill with a scanline polygon fill that carries coverage and face-local gradients across each span.
 - Track bounding boxes per face to reduce framebuffer comparisons.
 - Store cell tile and palette in separate arrays if palette-only updates become common.
 - Precompute rotation matrices or use smaller angle tables if more objects appear.
@@ -286,7 +312,7 @@ Potential next optimizations:
 
 ## Visual Roadmap
 
-The current result is a solid low-resolution shaded cube. The next visual upgrades should be tile-atlas driven:
+The current result is a solid low-resolution shaded cube with masked silhouettes and a subtle contact shadow. The next visual upgrades should still be tile-atlas driven:
 
 1. More face masks:
    - 16 or 32 coverage levels.
@@ -319,7 +345,7 @@ The latest captured frames are in `build/captures/`:
 - `05-zoom-out.png`
 - `sprite40-rotation-contact.png`
 
-These were captured from the emulator window without moving or resizing the window.
+The repository includes `make captures-preview`, which regenerates these PNGs from a Python mirror of the sprite40 fixed-point/cell renderer. These preview captures are useful on machines without ngdevkit or GnGeo. They are not a substitute for final emulator or hardware verification.
 
 ## Git History
 
@@ -335,5 +361,7 @@ The repository history documents the renderer evolution:
 8. Higher-detail sprite40 renderer.
 9. Edgeless solid-face sprite40 rendering.
 10. Zoom controls and smoother lighting.
+11. Sprite40 masked-cell rasterization, face-local shading, and contact shadow.
+12. Preview capture generator and documentation updates.
 
 The zip package includes `.git`, so the full commit history is available after extraction.

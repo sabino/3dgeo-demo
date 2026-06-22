@@ -11,11 +11,13 @@ The default renderer uses 8x8 FIX tiles in S-ROM. The cube treats each FIX cell 
 
 Cube geometry is computed live on the 68000. The runtime rotates the cube vertices, projects them, rasterizes faces into a small shade-cell framebuffer, and dirty-blits changed cells during vblank. There are no baked cube frames.
 
-Two renderer modes are available:
+The preferred `sprite40` renderer now uses a masked-cell rasterizer: each framebuffer cell is sampled at four sub-cell points, silhouette cells choose one of fifteen generated 2x2 coverage masks, and fully covered cells stay solid. This keeps the cube sprite-backed and low-bandwidth while making the outline read less like large square blocks. `sprite40` also adds a sprite-only soft contact shadow, face-local light gradients, and a default top/side view closer to the reference cube image.
+
+Three renderer modes are available:
 
 - `RENDERER=fix`: 40x28 FIX-cell framebuffer, default.
 - `RENDERER=sprite`: 20x14 native 16x16 sprite-cell framebuffer using C-ROM shade tiles at tile 256 and a sticky sprite chain.
-- `RENDERER=sprite40`: 40x28 sprite-cell framebuffer using half-size sprite shrink, richer shade levels, and directional edge tiles.
+- `RENDERER=sprite40`: 40x28 sprite-cell framebuffer using half-size sprite shrink, richer shade levels, sub-cell coverage masks, and a subtle contact shadow.
 
 Controls:
 
@@ -35,6 +37,14 @@ make
 make RENDERER=sprite
 make RENDERER=sprite40
 ```
+
+On machines without GnGeo/ngdevkit installed, preview captures can still be regenerated from a Python mirror of the sprite40 renderer:
+
+```sh
+make captures-preview
+```
+
+These PNGs are for visual review only; final ROM verification should still use GnGeo or hardware.
 
 ## Run
 
