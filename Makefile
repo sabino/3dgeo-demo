@@ -25,8 +25,11 @@ GNGEO_DATA := /usr/share/ngdevkit-gngeo/gngeo_data.zip
 ifeq ($(RENDERER),sprite)
 GAMETITLE := 3Dgeo sprite shade cube
 RENDERER_CFLAGS := -DRENDERER_SPRITE=1
+else ifeq ($(RENDERER),sprite40)
+GAMETITLE := 3Dgeo sprite40 shade cube
+RENDERER_CFLAGS := -DRENDERER_SPRITE40=1
 else ifneq ($(RENDERER),fix)
-$(error unsupported RENDERER=$(RENDERER), expected fix or sprite)
+$(error unsupported RENDERER=$(RENDERER), expected fix, sprite, or sprite40)
 endif
 
 CFLAGS ?= -std=c99 -fomit-frame-pointer -O2 -g -Wall -Wextra
@@ -52,7 +55,7 @@ GNGEO_HASH := $(ROM)/gngeo_data.zip
 MAME_HASH := $(ROM)/neogeo.xml
 
 .PHONY: all cart assets check-ngdevkit gngeo run clean distclean
-.PHONY: fix sprite gngeo-fix gngeo-sprite
+.PHONY: fix sprite sprite40 gngeo-fix gngeo-sprite gngeo-sprite40
 
 all: cart
 
@@ -62,11 +65,17 @@ fix:
 sprite:
 	$(MAKE) RENDERER=sprite all
 
+sprite40:
+	$(MAKE) RENDERER=sprite40 all
+
 gngeo-fix:
 	$(MAKE) RENDERER=fix gngeo
 
 gngeo-sprite:
 	$(MAKE) RENDERER=sprite gngeo
+
+gngeo-sprite40:
+	$(MAKE) RENDERER=sprite40 gngeo
 
 cart: check-ngdevkit $(CART) $(GNGEO_HASH) $(MAME_HASH)
 

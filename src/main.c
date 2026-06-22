@@ -6,11 +6,18 @@
 #define FIX_VISIBLE_ROWS 28
 #define FIX_VISIBLE_ROW_OFFSET 2
 
-#ifdef RENDERER_SPRITE
+#ifdef RENDERER_SPRITE40
+#define FRAME_W FIX_COLS
+#define FRAME_H FIX_VISIBLE_ROWS
+#define PROJECT_SCALE_X 46
+#define PROJECT_SCALE_Y 38
+#define SPRITE_ZOOM 0x077f
+#elif defined(RENDERER_SPRITE)
 #define FRAME_W 20
 #define FRAME_H 14
 #define PROJECT_SCALE_X 23
 #define PROJECT_SCALE_Y 19
+#define SPRITE_ZOOM 0x0fff
 #else
 #define FRAME_W FIX_COLS
 #define FRAME_H FIX_VISIBLE_ROWS
@@ -31,13 +38,30 @@
 #define SPRITE_SCREEN_X 0
 #define SPRITE_SCREEN_Y_REGISTER 496
 
+#if defined(RENDERER_SPRITE) || defined(RENDERER_SPRITE40)
+#define RENDERER_USES_SPRITES 1
+#endif
+
 enum {
     TILE_CLEAR = 0,
-    TILE_LIGHT,
-    TILE_MEDIUM,
-    TILE_DARK,
-    TILE_FULL,
+    TILE_SHADE_1,
+    TILE_SHADE_2,
+    TILE_SHADE_3,
+    TILE_SHADE_4,
+    TILE_SHADE_5,
+    TILE_SHADE_6,
+    TILE_SHADE_7,
+    TILE_SHADE_8,
+    TILE_SHADE_9,
     TILE_PAPER,
+    TILE_EDGE_H,
+    TILE_EDGE_V,
+    TILE_EDGE_DIAG_DOWN,
+    TILE_EDGE_DIAG_UP,
+    TILE_EDGE_SHALLOW_DOWN,
+    TILE_EDGE_SHALLOW_UP,
+    TILE_EDGE_STEEP_DOWN,
+    TILE_EDGE_STEEP_UP,
 };
 
 enum {
@@ -136,7 +160,7 @@ static inline void fix_poke_word(u8 col, u8 row, u16 word) {
     *REG_VRAMRW = word;
 }
 
-#ifdef RENDERER_SPRITE
+#ifdef RENDERER_USES_SPRITES
 static inline u16 sprite_attr(u16 word) {
     return (u16)((u16)word_palette(word) << 8);
 }
@@ -166,13 +190,13 @@ static void init_sprite_framebuffer(void) {
 
     *REG_VRAMMOD = 0x200;
     *REG_VRAMADDR = ADDR_SCB2;
-    *REG_VRAMRW = 0x0fff;
+    *REG_VRAMRW = SPRITE_ZOOM;
     *REG_VRAMRW = (u16)((SPRITE_SCREEN_Y_REGISTER << 7) + FRAME_H);
     *REG_VRAMRW = (u16)(SPRITE_SCREEN_X << 7);
 
     for (u8 x = 1; x < FRAME_W; x++) {
         *REG_VRAMADDR = (u16)(ADDR_SCB2 + x);
-        *REG_VRAMRW = 0x0fff;
+        *REG_VRAMRW = SPRITE_ZOOM;
         *REG_VRAMRW = 1 << 6;
     }
 }
@@ -243,15 +267,26 @@ static void clear_frame(void) {
     }
 }
 
-static u8 palette_for_normal(Vec3 normal) {
+static s16 light_for_normal(Vec3 normal) {
     Vec3 light = {-104, -150, -186};
-    s16 intensity = (s16)(((s32)normal.x * light.x +
-                           (s32)normal.y * light.y +
-                           (s32)normal.z * light.z) >> Q);
 
-    if (intensity > 105) return PAL_FACE_LIGHT;
-    if (intensity > 25) return PAL_FACE_MID;
-    return PAL_FACE_DARK;
+    return (s16)(((s32)normal.x * light.x +
+                  (s32)normal.y * light.y +
+                  (s32)normal.z * light.z) >> Q);
+}
+
+static u16 face_word_for_normal(Vec3 normal) {
+    s16 intensity = light_for_normal(normal);
+
+    if (intensity > 145) return fix_word(PAL_FACE_LIGHT, TILE_SHADE_1);
+    if (intensity > 105) return fix_word(PAL_FACE_LIGHT, TILE_SHADE_2);
+    if (intensity > 70) return fix_word(PAL_FACE_MID, TILE_SHADE_3);
+    if (intensity > 35) return fix_word(PAL_FACE_MID, TILE_SHADE_4);
+    if (intensity > 0) return fix_word(PAL_FACE_MID, TILE_SHADE_5);
+    if (intensity > -45) return fix_word(PAL_FACE_DARK, TILE_SHADE_5);
+    if (intensity > -90) return fix_word(PAL_FACE_DARK, TILE_SHADE_6);
+    if (intensity > -135) return fix_word(PAL_FACE_DARK, TILE_SHADE_7);
+    return fix_word(PAL_FACE_DARK, TILE_SHADE_8);
 }
 
 static s16 face_depth(const ProjectedVertex verts[8], const Face *face) {
@@ -321,7 +356,30 @@ static void fill_face(const ProjectedVertex verts[8], const Face *face, u16 word
     }
 }
 
-static void line(s16 x0, s16 y0, s16 x1, s16 y1, u16 word) {
+static u16 edge_word_for_segment(s16 x0, s16 y0, s16 x1, s16 y1) {
+    s16 dx = (s16)(x1 - x0);
+    s16 dy = (s16)(y1 - y0);
+    s16 ax = (dx < 0) ? (s16)-dx : dx;
+    s16 ay = (dy < 0) ? (s16)-dy : dy;
+    u16 tile;
+
+    if (ay * 4 <= ax) {
+        tile = TILE_EDGE_H;
+    } else if (ax * 4 <= ay) {
+        tile = TILE_EDGE_V;
+    } else if (ax * 3 >= ay * 2 && ay * 3 >= ax * 2) {
+        tile = ((dx < 0) ^ (dy < 0)) ? TILE_EDGE_DIAG_UP : TILE_EDGE_DIAG_DOWN;
+    } else if (ax > ay) {
+        tile = ((dx < 0) ^ (dy < 0)) ? TILE_EDGE_SHALLOW_UP : TILE_EDGE_SHALLOW_DOWN;
+    } else {
+        tile = ((dx < 0) ^ (dy < 0)) ? TILE_EDGE_STEEP_UP : TILE_EDGE_STEEP_DOWN;
+    }
+
+    return fix_word(PAL_EDGE, tile);
+}
+
+static void line(s16 x0, s16 y0, s16 x1, s16 y1) {
+    u16 word = edge_word_for_segment(x0, y0, x1, y1);
     s16 dx = (x0 < x1) ? (x1 - x0) : (x0 - x1);
     s16 sx = (x0 < x1) ? 1 : -1;
     s16 dy = (y0 < y1) ? (y0 - y1) : (y1 - y0);
@@ -346,12 +404,10 @@ static void line(s16 x0, s16 y0, s16 x1, s16 y1, u16 word) {
 }
 
 static void draw_face_edges(const ProjectedVertex verts[8], const Face *face) {
-    u16 edge = fix_word(PAL_EDGE, TILE_LIGHT);
-
     for (u8 i = 0; i < 4; i++) {
         const ProjectedVertex *a = &verts[face->v[i]];
         const ProjectedVertex *b = &verts[face->v[(i + 1) & 3]];
-        line(a->sx, a->sy, b->sx, b->sy, edge);
+        line(a->sx, a->sy, b->sx, b->sy);
     }
 }
 
@@ -374,8 +430,7 @@ static void render_cube(u8 pitch, u8 yaw, u8 roll) {
     clear_frame();
     for (u8 i = 0; i < 6; i++) {
         const Face *face = &cube_faces[order[i].face];
-        u8 pal = palette_for_normal(normals[order[i].face]);
-        fill_face(verts, face, fix_word(pal, TILE_MEDIUM));
+        fill_face(verts, face, face_word_for_normal(normals[order[i].face]));
     }
     for (u8 i = 0; i < 6; i++) {
         if (normals[i].z < 64) {
@@ -389,7 +444,7 @@ static void blit_frame(void) {
         for (u8 x = 0; x < FRAME_W; x++) {
             u16 word = frame_words[y][x];
             if (word != prev_words[y][x]) {
-#ifdef RENDERER_SPRITE
+#ifdef RENDERER_USES_SPRITES
                 sprite_poke_cell(x, y, word);
 #else
                 fix_poke_word(x, (u8)(y + FIX_VISIBLE_ROW_OFFSET), word);
@@ -401,7 +456,7 @@ static void blit_frame(void) {
 }
 
 static void clear_fix_map(void) {
-#ifdef RENDERER_SPRITE
+#ifdef RENDERER_USES_SPRITES
     u16 blank = fix_word(PAL_PAPER, TILE_CLEAR);
 #else
     u16 blank = fix_word(PAL_PAPER, TILE_PAPER);
@@ -459,7 +514,7 @@ int main(void) {
 
     init_palettes();
     clear_fix_map();
-#ifdef RENDERER_SPRITE
+#ifdef RENDERER_USES_SPRITES
     init_sprite_framebuffer();
 #endif
     render_cube(pitch, yaw, roll);

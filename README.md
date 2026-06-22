@@ -15,6 +15,7 @@ Two renderer modes are available:
 
 - `RENDERER=fix`: 40x28 FIX-cell framebuffer, default.
 - `RENDERER=sprite`: 20x14 native 16x16 sprite-cell framebuffer using C-ROM shade tiles at tile 256 and a sticky sprite chain.
+- `RENDERER=sprite40`: 40x28 sprite-cell framebuffer using half-size sprite shrink, richer shade levels, and directional edge tiles.
 
 Controls:
 
@@ -31,6 +32,7 @@ The visible FIX area used here is 40x28 cells. The full FIX map is 40x32 cells, 
 ```sh
 make
 make RENDERER=sprite
+make RENDERER=sprite40
 ```
 
 ## Run
@@ -38,6 +40,7 @@ make RENDERER=sprite
 ```sh
 make gngeo
 make gngeo-sprite
+make gngeo-sprite40
 ```
 
 This project follows the ngdevkit example convention of building a cart zip plus GnGeo hash data and running it with `ngdevkit-gngeo`.
