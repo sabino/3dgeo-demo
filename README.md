@@ -22,6 +22,7 @@ Controls:
 - left/right: yaw
 - up/down: pitch
 - A/B: roll
+- C/D: zoom in/out
 
 The visible FIX area used here is 40x28 cells. The full FIX map is 40x32 cells, with the top and bottom two rows hidden on NTSC displays.
 

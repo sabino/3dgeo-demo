@@ -28,7 +28,10 @@
 #define Q 8
 #define ONE (1 << Q)
 #define CUBE_RADIUS 120
-#define CAMERA_DISTANCE 700
+#define CAMERA_DISTANCE_DEFAULT 700
+#define CAMERA_DISTANCE_MIN 360
+#define CAMERA_DISTANCE_MAX 1200
+#define CAMERA_DISTANCE_STEP 24
 #define ANGLE_MASK 63
 
 #define ADDR_SCB1 0
@@ -66,9 +69,18 @@ enum {
 
 enum {
     PAL_PAPER = 0,
-    PAL_FACE_LIGHT,
-    PAL_FACE_MID,
-    PAL_FACE_DARK,
+    PAL_FACE_0,
+    PAL_FACE_1,
+    PAL_FACE_2,
+    PAL_FACE_3,
+    PAL_FACE_4,
+    PAL_FACE_5,
+    PAL_FACE_6,
+    PAL_FACE_7,
+    PAL_FACE_8,
+    PAL_FACE_9,
+    PAL_FACE_10,
+    PAL_FACE_11,
     PAL_EDGE,
 };
 
@@ -98,6 +110,7 @@ typedef struct {
 
 static u16 frame_words[FRAME_H][FRAME_W];
 static u16 prev_words[FRAME_H][FRAME_W];
+static s16 camera_distance = CAMERA_DISTANCE_DEFAULT;
 
 static const s16 sin_lut[64] = {
        0,   25,   50,   74,   98,  121,  142,  162,
@@ -215,9 +228,18 @@ static void init_one_palette(u8 palette, u16 paper) {
 
 static void init_palettes(void) {
     init_one_palette(PAL_PAPER, 0x0fff);
-    init_one_palette(PAL_FACE_LIGHT, 0x0eee);
-    init_one_palette(PAL_FACE_MID, 0x0888);
-    init_one_palette(PAL_FACE_DARK, 0x0333);
+    init_one_palette(PAL_FACE_0, 0x0222);
+    init_one_palette(PAL_FACE_1, 0x0333);
+    init_one_palette(PAL_FACE_2, 0x0444);
+    init_one_palette(PAL_FACE_3, 0x0555);
+    init_one_palette(PAL_FACE_4, 0x0666);
+    init_one_palette(PAL_FACE_5, 0x0777);
+    init_one_palette(PAL_FACE_6, 0x0888);
+    init_one_palette(PAL_FACE_7, 0x0999);
+    init_one_palette(PAL_FACE_8, 0x0aaa);
+    init_one_palette(PAL_FACE_9, 0x0bbb);
+    init_one_palette(PAL_FACE_10, 0x0ccc);
+    init_one_palette(PAL_FACE_11, 0x0eee);
     init_one_palette(PAL_EDGE, 0x0111);
 }
 
@@ -246,7 +268,7 @@ static Vec3 rotate_vec(Vec3 p, u8 pitch, u8 yaw, u8 roll) {
 
 static ProjectedVertex project_vertex(Vec3 p) {
     ProjectedVertex out;
-    s16 denom = (s16)(p.z + CAMERA_DISTANCE);
+    s16 denom = (s16)(p.z + camera_distance);
     if (denom < 160) denom = 160;
 
     out.x = p.x;
@@ -275,26 +297,30 @@ static s16 light_for_normal(Vec3 normal) {
                   (s32)normal.z * light.z) >> Q);
 }
 
-static u16 face_word_for_normal(Vec3 normal) {
-    s16 intensity = light_for_normal(normal);
-
+static u16 face_word_for_intensity(s16 intensity) {
 #ifdef RENDERER_SPRITE40
-    if (intensity > 85) return fix_word(PAL_FACE_LIGHT, TILE_SHADE_9);
-    if (intensity > -35) return fix_word(PAL_FACE_MID, TILE_SHADE_9);
-    return fix_word(PAL_FACE_DARK, TILE_SHADE_9);
+    s16 level = (s16)((intensity + 170) / 32);
+    if (level < 0) level = 0;
+    if (level > 11) level = 11;
+    return fix_word((u8)(PAL_FACE_0 + level), TILE_SHADE_9);
 #else
-    if (intensity > 145) return fix_word(PAL_FACE_LIGHT, TILE_SHADE_1);
-    if (intensity > 105) return fix_word(PAL_FACE_LIGHT, TILE_SHADE_2);
-    if (intensity > 70) return fix_word(PAL_FACE_MID, TILE_SHADE_3);
-    if (intensity > 35) return fix_word(PAL_FACE_MID, TILE_SHADE_4);
-    if (intensity > 0) return fix_word(PAL_FACE_MID, TILE_SHADE_5);
-    if (intensity > -45) return fix_word(PAL_FACE_DARK, TILE_SHADE_5);
-    if (intensity > -90) return fix_word(PAL_FACE_DARK, TILE_SHADE_6);
-    if (intensity > -135) return fix_word(PAL_FACE_DARK, TILE_SHADE_7);
-    return fix_word(PAL_FACE_DARK, TILE_SHADE_8);
+    if (intensity > 145) return fix_word(PAL_FACE_11, TILE_SHADE_1);
+    if (intensity > 105) return fix_word(PAL_FACE_10, TILE_SHADE_2);
+    if (intensity > 70) return fix_word(PAL_FACE_8, TILE_SHADE_3);
+    if (intensity > 35) return fix_word(PAL_FACE_7, TILE_SHADE_4);
+    if (intensity > 0) return fix_word(PAL_FACE_6, TILE_SHADE_5);
+    if (intensity > -45) return fix_word(PAL_FACE_4, TILE_SHADE_5);
+    if (intensity > -90) return fix_word(PAL_FACE_3, TILE_SHADE_6);
+    if (intensity > -135) return fix_word(PAL_FACE_2, TILE_SHADE_7);
+    return fix_word(PAL_FACE_1, TILE_SHADE_8);
 #endif
 }
 
+#ifndef RENDERER_SPRITE40
+static u16 face_word_for_normal(Vec3 normal) {
+    return face_word_for_intensity(light_for_normal(normal));
+}
+#endif
 static s16 face_depth(const ProjectedVertex verts[8], const Face *face) {
     s32 sum = 0;
     for (u8 i = 0; i < 4; i++) {
@@ -334,6 +360,7 @@ static u8 point_in_quad(const ProjectedVertex verts[8], const Face *face, s16 x,
     return 1;
 }
 
+#ifndef RENDERER_SPRITE40
 static void fill_face(const ProjectedVertex verts[8], const Face *face, u16 word) {
     s16 min_x = FRAME_W - 1;
     s16 max_x = 0;
@@ -361,6 +388,39 @@ static void fill_face(const ProjectedVertex verts[8], const Face *face, u16 word
         }
     }
 }
+#endif
+
+#ifdef RENDERER_SPRITE40
+static void fill_face_lit(const ProjectedVertex verts[8], const Face *face, Vec3 normal) {
+    s16 min_x = FRAME_W - 1;
+    s16 max_x = 0;
+    s16 min_y = FRAME_H - 1;
+    s16 max_y = 0;
+    s16 base = light_for_normal(normal);
+
+    for (u8 i = 0; i < 4; i++) {
+        const ProjectedVertex *v = &verts[face->v[i]];
+        if (v->sx < min_x) min_x = v->sx;
+        if (v->sx > max_x) max_x = v->sx;
+        if (v->sy < min_y) min_y = v->sy;
+        if (v->sy > max_y) max_y = v->sy;
+    }
+
+    if (min_x < 0) min_x = 0;
+    if (max_x >= FRAME_W) max_x = FRAME_W - 1;
+    if (min_y < 0) min_y = 0;
+    if (max_y >= FRAME_H) max_y = FRAME_H - 1;
+
+    for (s16 y = min_y; y <= max_y; y++) {
+        for (s16 x = min_x; x <= max_x; x++) {
+            if (point_in_quad(verts, face, x, y)) {
+                s16 gradient = (s16)(((FRAME_H / 2 - y) * 4) - ((x - FRAME_W / 2) * 2));
+                frame_words[y][x] = face_word_for_intensity((s16)(base + gradient));
+            }
+        }
+    }
+}
+#endif
 
 #ifndef RENDERER_SPRITE40
 static u16 edge_word_for_segment(s16 x0, s16 y0, s16 x1, s16 y1) {
@@ -438,7 +498,11 @@ static void render_cube(u8 pitch, u8 yaw, u8 roll) {
     clear_frame();
     for (u8 i = 0; i < 6; i++) {
         const Face *face = &cube_faces[order[i].face];
+#ifdef RENDERER_SPRITE40
+        fill_face_lit(verts, face, normals[order[i].face]);
+#else
         fill_face(verts, face, face_word_for_normal(normals[order[i].face]));
+#endif
     }
 #ifndef RENDERER_SPRITE40
     for (u8 i = 0; i < 6; i++) {
@@ -490,7 +554,7 @@ static u8 read_p1_input(void) {
     return (u8)~(*REG_P1CNT);
 }
 
-static u8 update_angles(u8 input, u8 *pitch, u8 *yaw, u8 *roll) {
+static u8 update_controls(u8 input, u8 *pitch, u8 *yaw, u8 *roll) {
     u8 changed = 0;
 
     if (input & CNT_LEFT) {
@@ -514,6 +578,17 @@ static u8 update_angles(u8 input, u8 *pitch, u8 *yaw, u8 *roll) {
         *roll = (u8)((*roll + 1) & ANGLE_MASK);
         changed = 1;
     }
+    if (input & CNT_C) {
+        if (camera_distance > CAMERA_DISTANCE_MIN) {
+            camera_distance = (s16)(camera_distance - CAMERA_DISTANCE_STEP);
+            changed = 1;
+        }
+    } else if (input & CNT_D) {
+        if (camera_distance < CAMERA_DISTANCE_MAX) {
+            camera_distance = (s16)(camera_distance + CAMERA_DISTANCE_STEP);
+            changed = 1;
+        }
+    }
 
     return changed;
 }
@@ -533,7 +608,7 @@ int main(void) {
     blit_frame();
 
     for (;;) {
-        if (update_angles(read_p1_input(), &pitch, &yaw, &roll)) {
+        if (update_controls(read_p1_input(), &pitch, &yaw, &roll)) {
             render_cube(pitch, yaw, roll);
         }
         ng_wait_vblank();
