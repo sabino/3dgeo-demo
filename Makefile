@@ -54,7 +54,7 @@ CART := $(ROM)/$(GAMEROM).zip
 GNGEO_HASH := $(ROM)/gngeo_data.zip
 MAME_HASH := $(ROM)/neogeo.xml
 
-.PHONY: all cart assets check-ngdevkit gngeo run clean distclean
+.PHONY: all cart assets captures-preview check-ngdevkit gngeo run clean distclean
 .PHONY: fix sprite sprite40 gngeo-fix gngeo-sprite gngeo-sprite40
 
 all: cart
@@ -87,6 +87,9 @@ check-ngdevkit:
 	@test -f "$(NGSHAREDIR)/nullsound_driver.ihx" || { echo "missing ngdevkit nullsound_driver.ihx"; exit 1; }
 
 assets: $(SROM1)
+
+captures-preview:
+	$(PYTHON) tools/render_sprite40_preview.py build/captures
 
 $(BUILDDIR) $(ROM) $(ASSETDIR):
 	mkdir -p $@
