@@ -154,6 +154,17 @@ typedef struct {
     s16 g_center;
 } FaceShade;
 
+typedef struct {
+    s32 a;
+    s32 b;
+    s32 c;
+} EdgeEquation;
+
+typedef struct {
+    EdgeEquation edge[4];
+    u8 positive_inside;
+} FaceCoverage;
+
 static const u8 face_adjacency[6][4] = {
     {2, 5, 3, 4},
     {2, 5, 3, 4},
@@ -432,22 +443,46 @@ static s32 edge_cross_q4(const ProjectedVertex *a, const ProjectedVertex *b, s16
     return (s32)(bx4 - ax4) * (py4 - ay4) - (s32)(by4 - ay4) * (px4 - ax4);
 }
 
-static u8 point_in_quad_q4(const ProjectedVertex verts[8], const Face *face, s16 px4, s16 py4) {
-    s32 first = 0;
+static void prepare_face_coverage(FaceCoverage *coverage, const ProjectedVertex verts[8],
+                                  const Face *face) {
+    s32 center_x4 = 0;
+    s32 center_y4 = 0;
+    s32 sign = 0;
 
     for (u8 i = 0; i < 4; i++) {
         const ProjectedVertex *a = &verts[face->v[i]];
         const ProjectedVertex *b = &verts[face->v[(i + 1) & 3]];
-        s32 c = edge_cross_q4(a, b, px4, py4);
-        if (c == 0) continue;
-        if (first == 0) first = c;
-        else if ((first < 0 && c > 0) || (first > 0 && c < 0)) return 0;
+        s16 ax4 = (s16)(a->sx << 2);
+        s16 ay4 = (s16)(a->sy << 2);
+        s16 bx4 = (s16)(b->sx << 2);
+        s16 by4 = (s16)(b->sy << 2);
+
+        coverage->edge[i].a = (s32)(ay4 - by4);
+        coverage->edge[i].b = (s32)(bx4 - ax4);
+        coverage->edge[i].c = (s32)(by4 - ay4) * ax4 - (s32)(bx4 - ax4) * ay4;
+        center_x4 += ax4;
+        center_y4 += ay4;
     }
 
-    return 1;
+    center_x4 >>= 2;
+    center_y4 >>= 2;
+
+    for (u8 i = 0; i < 4; i++) {
+        sign = coverage->edge[i].a * center_x4 +
+               coverage->edge[i].b * center_y4 +
+               coverage->edge[i].c;
+        if (sign != 0) break;
+    }
+
+    coverage->positive_inside = (sign >= 0) ? 1 : 0;
 }
 
-static u8 coverage_mask_in_quad(const ProjectedVertex verts[8], const Face *face, s16 x, s16 y) {
+static inline u8 edge_value_inside(const FaceCoverage *coverage, s32 value) {
+    if (coverage->positive_inside) return value >= 0;
+    return value <= 0;
+}
+
+static u8 coverage_mask_from_edges(const FaceCoverage *coverage, const s32 edge_value[4]) {
     static const s8 offsets[4][2] = {
         {1, 1},
         {3, 1},
@@ -456,25 +491,36 @@ static u8 coverage_mask_in_quad(const ProjectedVertex verts[8], const Face *face
     };
     u8 mask = 0;
 
-    for (u8 i = 0; i < 4; i++) {
-        s16 px4 = (s16)((x << 2) + offsets[i][0]);
-        s16 py4 = (s16)((y << 2) + offsets[i][1]);
-        if (point_in_quad_q4(verts, face, px4, py4)) {
-            mask |= (u8)(1 << i);
+    for (u8 sample = 0; sample < 4; sample++) {
+        u8 inside = 1;
+        s16 ox = offsets[sample][0];
+        s16 oy = offsets[sample][1];
+
+        for (u8 edge = 0; edge < 4; edge++) {
+            s32 value = edge_value[edge] +
+                        coverage->edge[edge].a * ox +
+                        coverage->edge[edge].b * oy;
+            if (!edge_value_inside(coverage, value)) {
+                inside = 0;
+                break;
+            }
+        }
+
+        if (inside) {
+            mask |= (u8)(1 << sample);
         }
     }
 
     return mask;
 }
 
-static u8 near_visible_neighbor_edge(const ProjectedVertex verts[8], const Face *face, u8 face_id,
-                                    const Vec3 normals[6], s16 x, s16 y) {
+static u8 near_visible_neighbor_edge(const ProjectedVertex verts[8], const Face *face,
+                                    u8 visible_neighbor_edges, s16 x, s16 y) {
     s16 px4 = (s16)((x << 2) + 2);
     s16 py4 = (s16)((y << 2) + 2);
 
     for (u8 i = 0; i < 4; i++) {
-        u8 neighbor = face_adjacency[face_id][i];
-        if (normals[neighbor].z >= 0) continue;
+        if ((visible_neighbor_edges & (1 << i)) == 0) continue;
 
         const ProjectedVertex *a = &verts[face->v[i]];
         const ProjectedVertex *b = &verts[face->v[(i + 1) & 3]];
@@ -665,8 +711,17 @@ static void fill_face_lit(const ProjectedVertex verts[8], const Face *face, u8 f
     s16 min_y = FRAME_H - 1;
     s16 max_y = 0;
     FaceShade shade;
+    FaceCoverage coverage;
+    u8 visible_neighbor_edges = 0;
 
     prepare_face_shade(&shade, verts, face, normals[face_id]);
+    prepare_face_coverage(&coverage, verts, face);
+
+    for (u8 i = 0; i < 4; i++) {
+        if (normals[face_adjacency[face_id][i]].z < 0) {
+            visible_neighbor_edges |= (u8)(1 << i);
+        }
+    }
 
     for (u8 i = 0; i < 4; i++) {
         const ProjectedVertex *v = &verts[face->v[i]];
@@ -682,14 +737,27 @@ static void fill_face_lit(const ProjectedVertex verts[8], const Face *face, u8 f
     if (max_y >= FRAME_H) max_y = FRAME_H - 1;
 
     for (s16 y = min_y; y <= max_y; y++) {
+        s32 edge_value[4];
+
+        for (u8 edge = 0; edge < 4; edge++) {
+            edge_value[edge] = coverage.edge[edge].a * (s16)(min_x << 2) +
+                               coverage.edge[edge].b * (s16)(y << 2) +
+                               coverage.edge[edge].c;
+        }
+
         for (s16 x = min_x; x <= max_x; x++) {
-            u8 mask = coverage_mask_in_quad(verts, face, x, y);
+            u8 mask = coverage_mask_from_edges(&coverage, edge_value);
             if (mask) {
                 s16 gradient = face_local_gradient(&shade, x, y);
-                if (mask != 0x0f && near_visible_neighbor_edge(verts, face, face_id, normals, x, y)) {
+                if (mask != 0x0f &&
+                    near_visible_neighbor_edge(verts, face, visible_neighbor_edges, x, y)) {
                     mask = 0x0f;
                 }
                 frame_words[y][x] = face_word_for_intensity_mask((s16)(shade.base + gradient), mask);
+            }
+
+            for (u8 edge = 0; edge < 4; edge++) {
+                edge_value[edge] += coverage.edge[edge].a << 2;
             }
         }
     }
