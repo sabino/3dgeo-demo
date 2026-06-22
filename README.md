@@ -1,15 +1,20 @@
 # 3Dgeo
 
-Minimal Neo Geo/ngdevkit project that draws a controllable cube on the FIX layer using generated shade tiles:
+Minimal Neo Geo/ngdevkit project that draws a controllable cube using generated shade tiles:
 
 - light shade: `░`
 - medium shade: `▒`
 - dark shade: `▓`
 - full block: `█`
 
-The shade glyphs are represented as 8x8 FIX tiles in S-ROM. The cube treats each FIX cell as a tiny dithered pixel: the tile selects the coverage pattern, while the upper FIX palette bits select the lighting level.
+The default renderer uses 8x8 FIX tiles in S-ROM. The cube treats each FIX cell as a tiny dithered pixel: the tile selects the coverage pattern, while the upper FIX palette bits select the lighting level.
 
-Cube geometry is computed live on the 68000. The runtime rotates the cube vertices, projects them, rasterizes faces into a 40x28 FIX-cell framebuffer, and dirty-blits changed FIX cells during vblank. There are no baked cube frames.
+Cube geometry is computed live on the 68000. The runtime rotates the cube vertices, projects them, rasterizes faces into a small shade-cell framebuffer, and dirty-blits changed cells during vblank. There are no baked cube frames.
+
+Two renderer modes are available:
+
+- `RENDERER=fix`: 40x28 FIX-cell framebuffer, default.
+- `RENDERER=sprite`: 20x14 native 16x16 sprite-cell framebuffer using C-ROM shade tiles at tile 256 and a sticky sprite chain.
 
 Controls:
 
@@ -25,12 +30,14 @@ The visible FIX area used here is 40x28 cells. The full FIX map is 40x32 cells, 
 
 ```sh
 make
+make RENDERER=sprite
 ```
 
 ## Run
 
 ```sh
 make gngeo
+make gngeo-sprite
 ```
 
 This project follows the ngdevkit example convention of building a cart zip plus GnGeo hash data and running it with `ngdevkit-gngeo`.

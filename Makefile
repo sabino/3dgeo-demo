@@ -1,8 +1,9 @@
 PROJECT := 3dgeo
 GAMEROM := 3dgeo
 GAMETITLE := 3Dgeo FIX shade wallpaper
+RENDERER ?= fix
 
-BUILDDIR := build
+BUILDDIR := build/$(RENDERER)
 ROM := $(BUILDDIR)/rom
 ASSETDIR := $(BUILDDIR)/assets
 
@@ -21,8 +22,16 @@ NGLDFLAGS := $(shell $(PKGCONFIG) --libs ngdevkit 2>/dev/null)
 NGSHAREDIR := $(shell $(PKGCONFIG) --variable=sharedir ngdevkit 2>/dev/null)
 GNGEO_DATA := /usr/share/ngdevkit-gngeo/gngeo_data.zip
 
+ifeq ($(RENDERER),sprite)
+GAMETITLE := 3Dgeo sprite shade cube
+RENDERER_CFLAGS := -DRENDERER_SPRITE=1
+else ifneq ($(RENDERER),fix)
+$(error unsupported RENDERER=$(RENDERER), expected fix or sprite)
+endif
+
 CFLAGS ?= -std=c99 -fomit-frame-pointer -O2 -g -Wall -Wextra
 CFLAGS += $(NGCFLAGS) -Isrc
+CFLAGS += $(RENDERER_CFLAGS)
 LDFLAGS += $(NGLDFLAGS)
 
 PROMSIZE := 1048576
@@ -43,8 +52,21 @@ GNGEO_HASH := $(ROM)/gngeo_data.zip
 MAME_HASH := $(ROM)/neogeo.xml
 
 .PHONY: all cart assets check-ngdevkit gngeo run clean distclean
+.PHONY: fix sprite gngeo-fix gngeo-sprite
 
 all: cart
+
+fix:
+	$(MAKE) RENDERER=fix all
+
+sprite:
+	$(MAKE) RENDERER=sprite all
+
+gngeo-fix:
+	$(MAKE) RENDERER=fix gngeo
+
+gngeo-sprite:
+	$(MAKE) RENDERER=sprite gngeo
 
 cart: check-ngdevkit $(CART) $(GNGEO_HASH) $(MAME_HASH)
 
@@ -66,6 +88,12 @@ $(ASSETDIR)/shade-fix.gif: tools/make_fix_tiles.py | $(ASSETDIR)
 $(ASSETDIR)/shade-fix.fix: $(ASSETDIR)/shade-fix.gif
 	$(TILETOOL) --fix -c $< -o $@
 
+$(ASSETDIR)/shade-sprite.gif: tools/make_sprite_tiles.py | $(ASSETDIR)
+	$(PYTHON) $< $@
+
+$(ASSETDIR)/shade-sprite.c1 $(ASSETDIR)/shade-sprite.c2 &: $(ASSETDIR)/shade-sprite.gif
+	$(TILETOOL) --sprite -c $< -o $(ASSETDIR)/shade-sprite.c1 $(ASSETDIR)/shade-sprite.c2 -s $(CROMSIZE)
+
 $(BUILDDIR)/%.o: src/%.c | $(BUILDDIR)
 	mkdir -p $(dir $@)
 	$(M68KGCC) $(CFLAGS) -c $< -o $@
@@ -81,8 +109,11 @@ $(SROM1): $(ASSETDIR)/shade-fix.fix | $(ROM)
 	cp $< $@
 	truncate -s $(SROMSIZE) $@
 
-$(CROM1) $(CROM2): | $(ROM)
-	dd if=/dev/zero of=$@ bs=$(CROMSIZE) count=1 status=none
+$(CROM1): $(ASSETDIR)/shade-sprite.c1 | $(ROM)
+	cp $< $@
+
+$(CROM2): $(ASSETDIR)/shade-sprite.c2 | $(ROM)
+	cp $< $@
 
 $(MROM1): | $(ROM)
 	$(Z80SDOBJCOPY) -I ihex -O binary "$(NGSHAREDIR)/nullsound_driver.ihx" $@ --pad-to $(MROMSIZE)
@@ -94,7 +125,7 @@ $(CART): $(PROM1) $(SROM1) $(CROM1) $(CROM2) $(MROM1) $(VROM1) | $(ROM)
 	$(ROMTOOL) -b cartridge -f zip \
 		-p $(PROM1) -s $(SROM1) -c $(CROM1) $(CROM2) -m $(MROM1) -v $(VROM1) \
 		-n $(GAMEROM) -l "$(GAMETITLE)" -y 2026 --publisher homebrew \
-		-x "zip.comment=3Dgeo ngdevkit FIX shade wallpaper" -o $@
+		-x "zip.comment=$(GAMETITLE)" -o $@
 
 $(GNGEO_HASH): $(CART)
 	$(ROMTOOL) -b hash -f gngeo \

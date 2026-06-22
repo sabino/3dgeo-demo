@@ -6,15 +6,30 @@
 #define FIX_VISIBLE_ROWS 28
 #define FIX_VISIBLE_ROW_OFFSET 2
 
+#ifdef RENDERER_SPRITE
+#define FRAME_W 20
+#define FRAME_H 14
+#define PROJECT_SCALE_X 23
+#define PROJECT_SCALE_Y 19
+#else
 #define FRAME_W FIX_COLS
 #define FRAME_H FIX_VISIBLE_ROWS
+#define PROJECT_SCALE_X 46
+#define PROJECT_SCALE_Y 38
+#endif
+
 #define Q 8
 #define ONE (1 << Q)
 #define CUBE_RADIUS 120
 #define CAMERA_DISTANCE 700
-#define PROJECT_SCALE_X 46
-#define PROJECT_SCALE_Y 38
 #define ANGLE_MASK 63
+
+#define ADDR_SCB1 0
+#define ADDR_SCB2 0x8000
+#define ADDR_SCB3 0x8200
+#define SPRITE_START_TILE 256
+#define SPRITE_SCREEN_X 0
+#define SPRITE_SCREEN_Y_REGISTER 496
 
 enum {
     TILE_BLANK = 0,
@@ -105,11 +120,61 @@ static inline u16 fix_word(u8 palette, u16 tile) {
     return (u16)(((u16)palette << 12) | tile);
 }
 
+static inline u8 word_palette(u16 word) {
+    return (u8)(word >> 12);
+}
+
+static inline u16 word_tile(u16 word) {
+    return (u16)(word & 0x0fff);
+}
+
 static inline void fix_poke_word(u8 col, u8 row, u16 word) {
     *REG_VRAMADDR = (u16)(ADDR_FIXMAP + ((u16)col << 5) + row);
     *REG_VRAMMOD = 1;
     *REG_VRAMRW = word;
 }
+
+#ifdef RENDERER_SPRITE
+static inline u16 sprite_attr(u16 word) {
+    return (u16)((u16)word_palette(word) << 8);
+}
+
+static inline u16 sprite_tile(u16 word) {
+    return (u16)(SPRITE_START_TILE + word_tile(word));
+}
+
+static inline void sprite_poke_cell(u8 col, u8 row, u16 word) {
+    *REG_VRAMADDR = (u16)(ADDR_SCB1 + ((u16)col * 64) + ((u16)row * 2));
+    *REG_VRAMMOD = 1;
+    *REG_VRAMRW = sprite_tile(word);
+    *REG_VRAMRW = sprite_attr(word);
+}
+
+static void init_sprite_framebuffer(void) {
+    u16 blank = fix_word(PAL_PAPER, TILE_BLANK);
+
+    *REG_VRAMMOD = 1;
+    for (u8 x = 0; x < FRAME_W; x++) {
+        *REG_VRAMADDR = (u16)(ADDR_SCB1 + ((u16)x * 64));
+        for (u8 y = 0; y < FRAME_H; y++) {
+            *REG_VRAMRW = sprite_tile(blank);
+            *REG_VRAMRW = sprite_attr(blank);
+        }
+    }
+
+    *REG_VRAMMOD = 0x200;
+    *REG_VRAMADDR = ADDR_SCB2;
+    *REG_VRAMRW = 0x0fff;
+    *REG_VRAMRW = (u16)((SPRITE_SCREEN_Y_REGISTER << 7) + FRAME_H);
+    *REG_VRAMRW = (u16)(SPRITE_SCREEN_X << 7);
+
+    for (u8 x = 1; x < FRAME_W; x++) {
+        *REG_VRAMADDR = (u16)(ADDR_SCB2 + x);
+        *REG_VRAMRW = 0x0fff;
+        *REG_VRAMRW = 1 << 6;
+    }
+}
+#endif
 
 static void init_one_palette(u8 palette, u16 paper) {
     volatile u16 *base = &MMAP_PALBANK1[(u16)palette << 4];
@@ -321,7 +386,11 @@ static void blit_frame(void) {
         for (u8 x = 0; x < FRAME_W; x++) {
             u16 word = frame_words[y][x];
             if (word != prev_words[y][x]) {
+#ifdef RENDERER_SPRITE
+                sprite_poke_cell(x, y, word);
+#else
                 fix_poke_word(x, (u8)(y + FIX_VISIBLE_ROW_OFFSET), word);
+#endif
                 prev_words[y][x] = word;
             }
         }
@@ -383,6 +452,9 @@ int main(void) {
 
     init_palettes();
     clear_fix_map();
+#ifdef RENDERER_SPRITE
+    init_sprite_framebuffer();
+#endif
     render_cube(pitch, yaw, roll);
     ng_wait_vblank();
     blit_frame();
