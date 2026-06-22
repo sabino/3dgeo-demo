@@ -28,11 +28,20 @@
 #define Q 8
 #define ONE (1 << Q)
 #define CUBE_RADIUS 120
+#ifdef RENDERER_SPRITE40
+#define CAMERA_DISTANCE_DEFAULT 760
+#define CAMERA_DISTANCE_MIN 420
+#define CAMERA_DISTANCE_MAX 1300
+#define CAMERA_DISTANCE_STEP 18
+#else
 #define CAMERA_DISTANCE_DEFAULT 700
 #define CAMERA_DISTANCE_MIN 360
 #define CAMERA_DISTANCE_MAX 1200
 #define CAMERA_DISTANCE_STEP 24
+#endif
 #define ANGLE_MASK 63
+
+#define FACE_LEVELS 12
 
 #define ADDR_SCB1 0
 #define ADDR_SCB2 0x8000
@@ -65,6 +74,23 @@ enum {
     TILE_EDGE_SHALLOW_UP,
     TILE_EDGE_STEEP_DOWN,
     TILE_EDGE_STEEP_UP,
+#ifdef RENDERER_SPRITE40
+    TILE_MASK_1,
+    TILE_MASK_2,
+    TILE_MASK_3,
+    TILE_MASK_4,
+    TILE_MASK_5,
+    TILE_MASK_6,
+    TILE_MASK_7,
+    TILE_MASK_8,
+    TILE_MASK_9,
+    TILE_MASK_10,
+    TILE_MASK_11,
+    TILE_MASK_12,
+    TILE_MASK_13,
+    TILE_MASK_14,
+    TILE_MASK_15,
+#endif
 };
 
 enum {
@@ -82,6 +108,8 @@ enum {
     PAL_FACE_10,
     PAL_FACE_11,
     PAL_EDGE,
+    PAL_SHADOW_LIGHT,
+    PAL_SHADOW_DARK,
 };
 
 typedef struct {
@@ -107,6 +135,35 @@ typedef struct {
     u8 face;
     s16 z;
 } FaceOrder;
+
+#ifdef RENDERER_SPRITE40
+typedef struct {
+    s16 base;
+    s16 origin_x;
+    s16 origin_y;
+    s16 ux;
+    s16 uy;
+    s16 vx;
+    s16 vy;
+    s16 inv_u_len;
+    s16 inv_v_len;
+    s16 g0;
+    s16 g1;
+    s16 g2;
+    s16 g3;
+    s16 g_center;
+} FaceShade;
+
+static const u8 face_adjacency[6][4] = {
+    {2, 5, 3, 4},
+    {2, 5, 3, 4},
+    {0, 5, 1, 4},
+    {0, 5, 1, 4},
+    {0, 3, 1, 2},
+    {0, 3, 1, 2},
+};
+
+#endif
 
 static u16 frame_words[FRAME_H][FRAME_W];
 static u16 prev_words[FRAME_H][FRAME_W];
@@ -241,6 +298,8 @@ static void init_palettes(void) {
     init_one_palette(PAL_FACE_10, 0x0ccc);
     init_one_palette(PAL_FACE_11, 0x0eee);
     init_one_palette(PAL_EDGE, 0x0111);
+    init_one_palette(PAL_SHADOW_LIGHT, 0x0eee);
+    init_one_palette(PAL_SHADOW_DARK, 0x0ddd);
 }
 
 static Vec3 rotate_vec(Vec3 p, u8 pitch, u8 yaw, u8 roll) {
@@ -290,20 +349,42 @@ static void clear_frame(void) {
 }
 
 static s16 light_for_normal(Vec3 normal) {
+#ifdef RENDERER_SPRITE40
+    Vec3 light = {-150, 70, -150};
+#else
     Vec3 light = {-104, -150, -186};
+#endif
 
     return (s16)(((s32)normal.x * light.x +
                   (s32)normal.y * light.y +
                   (s32)normal.z * light.z) >> Q);
 }
 
-static u16 face_word_for_intensity(s16 intensity) {
 #ifdef RENDERER_SPRITE40
-    s16 level = (s16)((intensity + 170) / 32);
-    if (level < 0) level = 0;
-    if (level > 11) level = 11;
-    return fix_word((u8)(PAL_FACE_0 + level), TILE_SHADE_9);
+static u8 face_level_for_intensity(s16 intensity) {
+    s16 scaled = (s16)(((s32)(intensity + 130) * 16) / 36);
+
+    if (scaled < 0) scaled = 0;
+    if (scaled > (FACE_LEVELS - 1) * 16) scaled = (FACE_LEVELS - 1) * 16;
+
+    scaled = (s16)(scaled + 8);
+    if (scaled > (FACE_LEVELS - 1) * 16) scaled = (FACE_LEVELS - 1) * 16;
+
+    return (u8)(scaled >> 4);
+}
+
+static u16 face_word_for_intensity_mask(s16 intensity, u8 mask) {
+    u8 level = face_level_for_intensity(intensity);
+    u16 tile = TILE_SHADE_9;
+
+    if (mask != 0x0f) {
+        tile = (u16)(TILE_MASK_1 + mask - 1);
+    }
+
+    return fix_word((u8)(PAL_FACE_0 + level), tile);
+}
 #else
+static u16 face_word_for_intensity(s16 intensity) {
     if (intensity > 145) return fix_word(PAL_FACE_11, TILE_SHADE_1);
     if (intensity > 105) return fix_word(PAL_FACE_10, TILE_SHADE_2);
     if (intensity > 70) return fix_word(PAL_FACE_8, TILE_SHADE_3);
@@ -313,8 +394,8 @@ static u16 face_word_for_intensity(s16 intensity) {
     if (intensity > -90) return fix_word(PAL_FACE_3, TILE_SHADE_6);
     if (intensity > -135) return fix_word(PAL_FACE_2, TILE_SHADE_7);
     return fix_word(PAL_FACE_1, TILE_SHADE_8);
-#endif
 }
+#endif
 
 #ifndef RENDERER_SPRITE40
 static u16 face_word_for_normal(Vec3 normal) {
@@ -341,6 +422,191 @@ static void sort_faces(FaceOrder order[6]) {
     }
 }
 
+#ifdef RENDERER_SPRITE40
+static s32 edge_cross_q4(const ProjectedVertex *a, const ProjectedVertex *b, s16 px4, s16 py4) {
+    s16 ax4 = (s16)(a->sx << 2);
+    s16 ay4 = (s16)(a->sy << 2);
+    s16 bx4 = (s16)(b->sx << 2);
+    s16 by4 = (s16)(b->sy << 2);
+
+    return (s32)(bx4 - ax4) * (py4 - ay4) - (s32)(by4 - ay4) * (px4 - ax4);
+}
+
+static u8 point_in_quad_q4(const ProjectedVertex verts[8], const Face *face, s16 px4, s16 py4) {
+    s32 first = 0;
+
+    for (u8 i = 0; i < 4; i++) {
+        const ProjectedVertex *a = &verts[face->v[i]];
+        const ProjectedVertex *b = &verts[face->v[(i + 1) & 3]];
+        s32 c = edge_cross_q4(a, b, px4, py4);
+        if (c == 0) continue;
+        if (first == 0) first = c;
+        else if ((first < 0 && c > 0) || (first > 0 && c < 0)) return 0;
+    }
+
+    return 1;
+}
+
+static u8 coverage_mask_in_quad(const ProjectedVertex verts[8], const Face *face, s16 x, s16 y) {
+    static const s8 offsets[4][2] = {
+        {1, 1},
+        {3, 1},
+        {1, 3},
+        {3, 3},
+    };
+    u8 mask = 0;
+
+    for (u8 i = 0; i < 4; i++) {
+        s16 px4 = (s16)((x << 2) + offsets[i][0]);
+        s16 py4 = (s16)((y << 2) + offsets[i][1]);
+        if (point_in_quad_q4(verts, face, px4, py4)) {
+            mask |= (u8)(1 << i);
+        }
+    }
+
+    return mask;
+}
+
+static u8 near_visible_neighbor_edge(const ProjectedVertex verts[8], const Face *face, u8 face_id,
+                                    const Vec3 normals[6], s16 x, s16 y) {
+    s16 px4 = (s16)((x << 2) + 2);
+    s16 py4 = (s16)((y << 2) + 2);
+
+    for (u8 i = 0; i < 4; i++) {
+        u8 neighbor = face_adjacency[face_id][i];
+        if (normals[neighbor].z >= 0) continue;
+
+        const ProjectedVertex *a = &verts[face->v[i]];
+        const ProjectedVertex *b = &verts[face->v[(i + 1) & 3]];
+        s32 cross = edge_cross_q4(a, b, px4, py4);
+        s16 dx = (s16)(b->sx - a->sx);
+        s16 dy = (s16)(b->sy - a->sy);
+        s16 len = (s16)(((dx < 0) ? -dx : dx) + ((dy < 0) ? -dy : dy));
+        s32 threshold = (s32)(len + 1) * 7;
+
+        if (cross < 0) cross = -cross;
+        if (cross <= threshold) return 1;
+    }
+
+    return 0;
+}
+
+static s16 screen_light_bias(s16 x, s16 y) {
+    return (s16)(((FRAME_H / 2 - y) * 5) - ((x - FRAME_W / 2) * 2));
+}
+
+static s16 clamp_q8(s16 value) {
+    if (value < 0) return 0;
+    if (value > ONE) return ONE;
+    return value;
+}
+
+static void prepare_face_shade(FaceShade *shade, const ProjectedVertex verts[8], const Face *face, Vec3 normal) {
+    const ProjectedVertex *v0 = &verts[face->v[0]];
+    const ProjectedVertex *v1 = &verts[face->v[1]];
+    const ProjectedVertex *v2 = &verts[face->v[2]];
+    const ProjectedVertex *v3 = &verts[face->v[3]];
+    s32 u_len;
+    s32 v_len;
+
+    shade->base = light_for_normal(normal);
+    shade->origin_x = v0->sx;
+    shade->origin_y = v0->sy;
+    shade->ux = (s16)(v1->sx - v0->sx);
+    shade->uy = (s16)(v1->sy - v0->sy);
+    shade->vx = (s16)(v3->sx - v0->sx);
+    shade->vy = (s16)(v3->sy - v0->sy);
+
+    u_len = (s32)shade->ux * shade->ux + (s32)shade->uy * shade->uy;
+    v_len = (s32)shade->vx * shade->vx + (s32)shade->vy * shade->vy;
+    shade->inv_u_len = (u_len > 0) ? (s16)(4096 / u_len) : 0;
+    shade->inv_v_len = (v_len > 0) ? (s16)(4096 / v_len) : 0;
+
+    shade->g0 = screen_light_bias(v0->sx, v0->sy);
+    shade->g1 = screen_light_bias(v1->sx, v1->sy);
+    shade->g2 = screen_light_bias(v2->sx, v2->sy);
+    shade->g3 = screen_light_bias(v3->sx, v3->sy);
+    shade->g_center = (s16)((shade->g0 + shade->g1 + shade->g2 + shade->g3) >> 2);
+}
+
+static s16 face_local_gradient(const FaceShade *shade, s16 x, s16 y) {
+    s16 px = (s16)(x - shade->origin_x);
+    s16 py = (s16)(y - shade->origin_y);
+    s16 u = 0;
+    s16 v = 0;
+    s16 gu0;
+    s16 gu1;
+    s16 g;
+
+    if (shade->inv_u_len) {
+        s32 dot_u = (s32)px * shade->ux + (s32)py * shade->uy;
+        u = clamp_q8((s16)((dot_u * shade->inv_u_len) >> 4));
+    }
+    if (shade->inv_v_len) {
+        s32 dot_v = (s32)px * shade->vx + (s32)py * shade->vy;
+        v = clamp_q8((s16)((dot_v * shade->inv_v_len) >> 4));
+    }
+
+    gu0 = (s16)(shade->g0 + (((s32)(shade->g1 - shade->g0) * u) >> Q));
+    gu1 = (s16)(shade->g3 + (((s32)(shade->g2 - shade->g3) * u) >> Q));
+    g = (s16)(gu0 + (((s32)(gu1 - gu0) * v) >> Q));
+
+    return (s16)(g - shade->g_center);
+}
+
+static void draw_contact_shadow(const ProjectedVertex verts[8]) {
+    s16 min_x = FRAME_W - 1;
+    s16 max_x = 0;
+    s16 min_y = FRAME_H - 1;
+    s16 max_y = 0;
+
+    for (u8 i = 0; i < 8; i++) {
+        if (verts[i].sx < min_x) min_x = verts[i].sx;
+        if (verts[i].sx > max_x) max_x = verts[i].sx;
+        if (verts[i].sy < min_y) min_y = verts[i].sy;
+        if (verts[i].sy > max_y) max_y = verts[i].sy;
+    }
+
+    s16 cx = (s16)((min_x + max_x) >> 1);
+    s16 cy = (s16)(max_y + 2);
+    s16 rx = (s16)(((max_x - min_x) >> 1) + 2);
+    s16 ry = (s16)(((max_y - min_y) / 9) + 1);
+
+    if (rx < 5) rx = 5;
+    if (rx > 14) rx = 14;
+    if (ry < 2) ry = 2;
+    if (ry > 4) ry = 4;
+
+    s16 x0 = (s16)(cx - rx);
+    s16 x1 = (s16)(cx + rx);
+    s16 y0 = (s16)(cy - ry);
+    s16 y1 = (s16)(cy + ry);
+
+    if (x0 < 0) x0 = 0;
+    if (x1 >= FRAME_W) x1 = FRAME_W - 1;
+    if (y0 < 0) y0 = 0;
+    if (y1 >= FRAME_H) y1 = FRAME_H - 1;
+
+    for (s16 y = y0; y <= y1; y++) {
+        for (s16 x = x0; x <= x1; x++) {
+            s16 dx = (s16)(x - cx);
+            s16 dy = (s16)(y - cy);
+            s16 d = (s16)(((s32)dx * dx * 16) / ((s32)rx * rx) +
+                          ((s32)dy * dy * 16) / ((s32)ry * ry));
+
+            if (d <= 16) {
+                if (d < 7) {
+                    frame_words[y][x] = fix_word(PAL_SHADOW_DARK, TILE_SHADE_2);
+                } else {
+                    frame_words[y][x] = fix_word(PAL_SHADOW_LIGHT, TILE_SHADE_1);
+                }
+            }
+        }
+    }
+}
+#endif
+
+#ifndef RENDERER_SPRITE40
 static s16 edge_cross(s16 ax, s16 ay, s16 bx, s16 by, s16 px, s16 py) {
     return (s16)((s32)(bx - ax) * (py - ay) - (s32)(by - ay) * (px - ax));
 }
@@ -359,6 +625,7 @@ static u8 point_in_quad(const ProjectedVertex verts[8], const Face *face, s16 x,
 
     return 1;
 }
+#endif
 
 #ifndef RENDERER_SPRITE40
 static void fill_face(const ProjectedVertex verts[8], const Face *face, u16 word) {
@@ -391,12 +658,15 @@ static void fill_face(const ProjectedVertex verts[8], const Face *face, u16 word
 #endif
 
 #ifdef RENDERER_SPRITE40
-static void fill_face_lit(const ProjectedVertex verts[8], const Face *face, Vec3 normal) {
+static void fill_face_lit(const ProjectedVertex verts[8], const Face *face, u8 face_id,
+                          const Vec3 normals[6]) {
     s16 min_x = FRAME_W - 1;
     s16 max_x = 0;
     s16 min_y = FRAME_H - 1;
     s16 max_y = 0;
-    s16 base = light_for_normal(normal);
+    FaceShade shade;
+
+    prepare_face_shade(&shade, verts, face, normals[face_id]);
 
     for (u8 i = 0; i < 4; i++) {
         const ProjectedVertex *v = &verts[face->v[i]];
@@ -413,9 +683,13 @@ static void fill_face_lit(const ProjectedVertex verts[8], const Face *face, Vec3
 
     for (s16 y = min_y; y <= max_y; y++) {
         for (s16 x = min_x; x <= max_x; x++) {
-            if (point_in_quad(verts, face, x, y)) {
-                s16 gradient = (s16)(((FRAME_H / 2 - y) * 4) - ((x - FRAME_W / 2) * 2));
-                frame_words[y][x] = face_word_for_intensity((s16)(base + gradient));
+            u8 mask = coverage_mask_in_quad(verts, face, x, y);
+            if (mask) {
+                s16 gradient = face_local_gradient(&shade, x, y);
+                if (mask != 0x0f && near_visible_neighbor_edge(verts, face, face_id, normals, x, y)) {
+                    mask = 0x0f;
+                }
+                frame_words[y][x] = face_word_for_intensity_mask((s16)(shade.base + gradient), mask);
             }
         }
     }
@@ -496,10 +770,16 @@ static void render_cube(u8 pitch, u8 yaw, u8 roll) {
     sort_faces(order);
 
     clear_frame();
+#ifdef RENDERER_SPRITE40
+    draw_contact_shadow(verts);
+#endif
     for (u8 i = 0; i < 6; i++) {
         const Face *face = &cube_faces[order[i].face];
 #ifdef RENDERER_SPRITE40
-        fill_face_lit(verts, face, normals[order[i].face]);
+        u8 face_id = order[i].face;
+        if (normals[face_id].z < 0) {
+            fill_face_lit(verts, face, face_id, normals);
+        }
 #else
         fill_face(verts, face, face_word_for_normal(normals[order[i].face]));
 #endif
@@ -594,8 +874,13 @@ static u8 update_controls(u8 input, u8 *pitch, u8 *yaw, u8 *roll) {
 }
 
 int main(void) {
+#ifdef RENDERER_SPRITE40
+    u8 pitch = 54;
+    u8 yaw = 56;
+#else
     u8 pitch = 4;
     u8 yaw = 5;
+#endif
     u8 roll = 0;
 
     init_palettes();

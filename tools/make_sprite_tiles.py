@@ -11,7 +11,9 @@ from PIL import Image
 
 TILE_SIZE = 16
 START_TILE = 256
-ATLAS_TILE_COUNT = 19
+BASE_ATLAS_TILE_COUNT = 19
+MASK_TILE_COUNT = 15
+ATLAS_TILE_COUNT = BASE_ATLAS_TILE_COUNT + MASK_TILE_COUNT
 TILE_COUNT = START_TILE + ATLAS_TILE_COUNT
 
 CLEAR = 0
@@ -26,6 +28,7 @@ EDGE_SHALLOW_DOWN = 15
 EDGE_SHALLOW_UP = 16
 EDGE_STEEP_DOWN = 17
 EDGE_STEEP_UP = 18
+MASK_FIRST = 19
 
 BAYER_8X8 = (
     (0, 48, 12, 60, 3, 51, 15, 63),
@@ -75,6 +78,16 @@ def shade_on(tile: int, x: int, y: int) -> bool:
     return BAYER_8X8[y & 7][x & 7] < threshold
 
 
+def mask_on(tile: int, x: int, y: int) -> bool:
+    if tile < MASK_FIRST:
+        return False
+
+    mask = tile - MASK_FIRST + 1
+    bit = (1 if x >= TILE_SIZE // 2 else 0) | (2 if y >= TILE_SIZE // 2 else 0)
+
+    return (mask & (1 << bit)) != 0
+
+
 def pixel_index(tile: int, x: int, y: int) -> int:
     atlas_tile = tile - START_TILE
     if atlas_tile == CLEAR:
@@ -83,6 +96,8 @@ def pixel_index(tile: int, x: int, y: int) -> int:
         return 2
     if EDGE_H <= atlas_tile <= EDGE_STEEP_UP:
         return 1 if edge_on(atlas_tile, x, y) else 2
+    if MASK_FIRST <= atlas_tile < ATLAS_TILE_COUNT:
+        return 1 if mask_on(atlas_tile, x, y) else 2
     return 1 if shade_on(atlas_tile, x, y) else 2
 
 
