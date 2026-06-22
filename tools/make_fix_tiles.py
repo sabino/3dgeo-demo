@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate blank plus light/medium/dark/full 8x8 FIX tiles."""
+"""Generate clear plus light/medium/dark/full/paper 8x8 FIX tiles."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from PIL import Image
 
 
 TILE_SIZE = 8
-TILE_COUNT = 5
+TILE_COUNT = 6
 
 
 def pixel_on(tile: int, x: int, y: int) -> bool:
@@ -33,7 +33,7 @@ def main() -> int:
     out = Path(sys.argv[1])
     out.parent.mkdir(parents=True, exist_ok=True)
 
-    image = Image.new("P", (TILE_COUNT * TILE_SIZE, TILE_SIZE), 1)
+    image = Image.new("P", (TILE_COUNT * TILE_SIZE, TILE_SIZE), 0)
     image.putpalette([
         0, 0, 0,
         255, 255, 255,
@@ -43,7 +43,13 @@ def main() -> int:
         ox = tile * TILE_SIZE
         for y in range(TILE_SIZE):
             for x in range(TILE_SIZE):
-                image.putpixel((ox + x, y), 0 if pixel_on(tile, x, y) else 1)
+                if tile == 0:
+                    pixel = 0
+                elif tile == 5:
+                    pixel = 1
+                else:
+                    pixel = 0 if pixel_on(tile, x, y) else 1
+                image.putpixel((ox + x, y), pixel)
 
     image.save(out)
     return 0

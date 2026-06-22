@@ -32,10 +32,12 @@
 #define SPRITE_SCREEN_Y_REGISTER 496
 
 enum {
-    TILE_BLANK = 0,
+    TILE_CLEAR = 0,
     TILE_LIGHT,
     TILE_MEDIUM,
     TILE_DARK,
+    TILE_FULL,
+    TILE_PAPER,
 };
 
 enum {
@@ -151,7 +153,7 @@ static inline void sprite_poke_cell(u8 col, u8 row, u16 word) {
 }
 
 static void init_sprite_framebuffer(void) {
-    u16 blank = fix_word(PAL_PAPER, TILE_BLANK);
+    u16 blank = fix_word(PAL_PAPER, TILE_PAPER);
 
     *REG_VRAMMOD = 1;
     for (u8 x = 0; x < FRAME_W; x++) {
@@ -181,7 +183,8 @@ static void init_one_palette(u8 palette, u16 paper) {
 
     base[0] = 0x8000;
     base[1] = paper;
-    for (u8 i = 2; i < 16; i++) {
+    base[2] = 0x0fff;
+    for (u8 i = 3; i < 16; i++) {
         base[i] = base[1];
     }
 }
@@ -231,7 +234,7 @@ static ProjectedVertex project_vertex(Vec3 p) {
 }
 
 static void clear_frame(void) {
-    u16 blank = fix_word(PAL_PAPER, TILE_BLANK);
+    u16 blank = fix_word(PAL_PAPER, TILE_PAPER);
 
     for (u8 y = 0; y < FRAME_H; y++) {
         for (u8 x = 0; x < FRAME_W; x++) {
@@ -398,7 +401,11 @@ static void blit_frame(void) {
 }
 
 static void clear_fix_map(void) {
-    u16 blank = fix_word(PAL_PAPER, TILE_BLANK);
+#ifdef RENDERER_SPRITE
+    u16 blank = fix_word(PAL_PAPER, TILE_CLEAR);
+#else
+    u16 blank = fix_word(PAL_PAPER, TILE_PAPER);
+#endif
 
     for (u8 x = 0; x < FIX_COLS; x++) {
         for (u8 y = 0; y < FIX_MAP_ROWS; y++) {
