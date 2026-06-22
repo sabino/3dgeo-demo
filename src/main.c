@@ -215,10 +215,10 @@ static void init_one_palette(u8 palette, u16 paper) {
 
 static void init_palettes(void) {
     init_one_palette(PAL_PAPER, 0x0fff);
-    init_one_palette(PAL_FACE_LIGHT, 0x0fff);
-    init_one_palette(PAL_FACE_MID, 0x0aaa);
+    init_one_palette(PAL_FACE_LIGHT, 0x0ddd);
+    init_one_palette(PAL_FACE_MID, 0x0999);
     init_one_palette(PAL_FACE_DARK, 0x0555);
-    init_one_palette(PAL_EDGE, 0x0222);
+    init_one_palette(PAL_EDGE, 0x0111);
 }
 
 static Vec3 rotate_vec(Vec3 p, u8 pitch, u8 yaw, u8 roll) {
@@ -278,6 +278,11 @@ static s16 light_for_normal(Vec3 normal) {
 static u16 face_word_for_normal(Vec3 normal) {
     s16 intensity = light_for_normal(normal);
 
+#ifdef RENDERER_SPRITE40
+    if (intensity > 85) return fix_word(PAL_FACE_LIGHT, TILE_SHADE_9);
+    if (intensity > -55) return fix_word(PAL_FACE_MID, TILE_SHADE_9);
+    return fix_word(PAL_FACE_DARK, TILE_SHADE_9);
+#else
     if (intensity > 145) return fix_word(PAL_FACE_LIGHT, TILE_SHADE_1);
     if (intensity > 105) return fix_word(PAL_FACE_LIGHT, TILE_SHADE_2);
     if (intensity > 70) return fix_word(PAL_FACE_MID, TILE_SHADE_3);
@@ -287,6 +292,7 @@ static u16 face_word_for_normal(Vec3 normal) {
     if (intensity > -90) return fix_word(PAL_FACE_DARK, TILE_SHADE_6);
     if (intensity > -135) return fix_word(PAL_FACE_DARK, TILE_SHADE_7);
     return fix_word(PAL_FACE_DARK, TILE_SHADE_8);
+#endif
 }
 
 static s16 face_depth(const ProjectedVertex verts[8], const Face *face) {
@@ -433,8 +439,9 @@ static void render_cube(u8 pitch, u8 yaw, u8 roll) {
         fill_face(verts, face, face_word_for_normal(normals[order[i].face]));
     }
     for (u8 i = 0; i < 6; i++) {
-        if (normals[i].z < 64) {
-            draw_face_edges(verts, &cube_faces[i]);
+        u8 face_id = order[i].face;
+        if (normals[face_id].z < -16) {
+            draw_face_edges(verts, &cube_faces[face_id]);
         }
     }
 }
@@ -508,8 +515,8 @@ static u8 update_angles(u8 input, u8 *pitch, u8 *yaw, u8 *roll) {
 }
 
 int main(void) {
-    u8 pitch = 6;
-    u8 yaw = 6;
+    u8 pitch = 4;
+    u8 yaw = 5;
     u8 roll = 0;
 
     init_palettes();
