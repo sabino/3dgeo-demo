@@ -215,9 +215,9 @@ static void init_one_palette(u8 palette, u16 paper) {
 
 static void init_palettes(void) {
     init_one_palette(PAL_PAPER, 0x0fff);
-    init_one_palette(PAL_FACE_LIGHT, 0x0ddd);
-    init_one_palette(PAL_FACE_MID, 0x0999);
-    init_one_palette(PAL_FACE_DARK, 0x0555);
+    init_one_palette(PAL_FACE_LIGHT, 0x0eee);
+    init_one_palette(PAL_FACE_MID, 0x0888);
+    init_one_palette(PAL_FACE_DARK, 0x0333);
     init_one_palette(PAL_EDGE, 0x0111);
 }
 
@@ -280,7 +280,7 @@ static u16 face_word_for_normal(Vec3 normal) {
 
 #ifdef RENDERER_SPRITE40
     if (intensity > 85) return fix_word(PAL_FACE_LIGHT, TILE_SHADE_9);
-    if (intensity > -55) return fix_word(PAL_FACE_MID, TILE_SHADE_9);
+    if (intensity > -35) return fix_word(PAL_FACE_MID, TILE_SHADE_9);
     return fix_word(PAL_FACE_DARK, TILE_SHADE_9);
 #else
     if (intensity > 145) return fix_word(PAL_FACE_LIGHT, TILE_SHADE_1);
@@ -362,6 +362,7 @@ static void fill_face(const ProjectedVertex verts[8], const Face *face, u16 word
     }
 }
 
+#ifndef RENDERER_SPRITE40
 static u16 edge_word_for_segment(s16 x0, s16 y0, s16 x1, s16 y1) {
     s16 dx = (s16)(x1 - x0);
     s16 dy = (s16)(y1 - y0);
@@ -416,6 +417,7 @@ static void draw_face_edges(const ProjectedVertex verts[8], const Face *face) {
         line(a->sx, a->sy, b->sx, b->sy);
     }
 }
+#endif
 
 static void render_cube(u8 pitch, u8 yaw, u8 roll) {
     ProjectedVertex verts[8];
@@ -438,12 +440,14 @@ static void render_cube(u8 pitch, u8 yaw, u8 roll) {
         const Face *face = &cube_faces[order[i].face];
         fill_face(verts, face, face_word_for_normal(normals[order[i].face]));
     }
+#ifndef RENDERER_SPRITE40
     for (u8 i = 0; i < 6; i++) {
         u8 face_id = order[i].face;
         if (normals[face_id].z < -16) {
             draw_face_edges(verts, &cube_faces[face_id]);
         }
     }
+#endif
 }
 
 static void blit_frame(void) {
