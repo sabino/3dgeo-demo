@@ -863,19 +863,41 @@ static void render_cube(u8 pitch, u8 yaw, u8 roll) {
 }
 
 static void blit_frame(void) {
+#ifdef RENDERER_USES_SPRITES
     for (u8 y = 0; y < FRAME_H; y++) {
         for (u8 x = 0; x < FRAME_W; x++) {
             u16 word = frame_words[y][x];
             if (word != prev_words[y][x]) {
-#ifdef RENDERER_USES_SPRITES
                 sprite_poke_cell(x, y, word);
-#else
-                fix_poke_word(x, (u8)(y + FIX_VISIBLE_ROW_OFFSET), word);
-#endif
                 prev_words[y][x] = word;
             }
         }
     }
+#else
+    for (u8 y = 0; y < FRAME_H; y++) {
+        u8 row = (u8)(y + FIX_VISIBLE_ROW_OFFSET);
+        u8 x = 0;
+
+        while (x < FRAME_W) {
+            while (x < FRAME_W && frame_words[y][x] == prev_words[y][x]) {
+                x++;
+            }
+            if (x >= FRAME_W) break;
+
+            *REG_VRAMMOD = 32;
+            *REG_VRAMADDR = (u16)(ADDR_FIXMAP + ((u16)x << 5) + row);
+
+            while (x < FRAME_W) {
+                u16 word = frame_words[y][x];
+                if (word == prev_words[y][x]) break;
+
+                *REG_VRAMRW = word;
+                prev_words[y][x] = word;
+                x++;
+            }
+        }
+    }
+#endif
 }
 
 static void clear_fix_map(void) {
