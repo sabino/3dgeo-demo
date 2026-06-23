@@ -199,6 +199,38 @@ static void clear_fix_map(void) {
     }
 }
 
+static void fix_puts(u8 col, u8 row, u8 palette, const char *text) {
+    while (*text && col < FIX_COLS) {
+        u8 tile = (u8)*text++;
+
+        if (tile >= 32 && tile < 128) {
+            fix_poke_word(col, row, fix_word(palette, tile));
+        }
+        col++;
+    }
+}
+
+static void draw_controls_overlay(u8 menu_active, u8 selected_option) {
+    u8 palette = (u8)((!menu_active && selected_option == BALL_OPTION)
+        ? PAL_SHADOW_LIGHT
+        : PAL_EDGE);
+
+    clear_fix_map();
+
+    if (menu_active) {
+        fix_puts(2, 2, palette, "PICKER: LEFT RIGHT SELECT");
+        fix_puts(2, 3, palette, "Z ENTER   3 BACK");
+    } else if (selected_option == BALL_OPTION) {
+        fix_puts(2, 2, palette, "BALL: ARROWS MOVE LIGHT");
+        fix_puts(2, 3, palette, "Z/X DEPTH   A/S ZOOM");
+        fix_puts(2, 29, palette, "3 BACK TO PICKER");
+    } else {
+        fix_puts(2, 2, palette, "ARROWS ROTATE   Z/X ROLL");
+        fix_puts(2, 3, palette, "A/S ZOOM");
+        fix_puts(2, 29, palette, "3 BACK TO PICKER");
+    }
+}
+
 static void clear_sprite_state(void) {
     *REG_VRAMMOD = 0x200;
     for (u16 sprite = 0; sprite < SPRITE_MAX_DISPLAYABLE; sprite++) {
@@ -628,13 +660,34 @@ static void draw_light_ball(void) {
     ProjectedVertex light = project_vertex(ball_light);
     u16 halo = fix_word(PAL_SHADOW_LIGHT, TILE_SHADE_3);
     u16 core = fix_word(PAL_SHADOW_LIGHT, TILE_SHADE_9);
+    s16 denom = (s16)(ball_light.z + camera_distance);
+    if (denom < 160) denom = 160;
 
-    frame_rect((s16)(light.sx - 2), (s16)(light.sy - 1),
-               (s16)(light.sx + 2), (s16)(light.sy + 1), halo);
-    frame_rect((s16)(light.sx - 1), (s16)(light.sy - 2),
-               (s16)(light.sx + 1), (s16)(light.sy + 2), halo);
-    frame_rect((s16)(light.sx - 1), (s16)(light.sy - 1),
-               (s16)(light.sx + 1), (s16)(light.sy + 1), core);
+    s16 radius = (s16)(1 + ((s32)1200 / denom));
+    if (radius < 2) radius = 2;
+    if (radius > 6) radius = 6;
+
+    s16 core_radius = (s16)(radius - 1);
+    s16 radius_sq = (s16)(radius * radius);
+    s16 core_sq = (s16)(core_radius * core_radius);
+
+    for (s16 y = (s16)(light.sy - radius); y <= (s16)(light.sy + radius); y++) {
+        if (y < 0 || y >= FRAME_H) continue;
+
+        for (s16 x = (s16)(light.sx - radius); x <= (s16)(light.sx + radius); x++) {
+            if (x < 0 || x >= FRAME_W) continue;
+
+            s16 dx = (s16)(x - light.sx);
+            s16 dy = (s16)(y - light.sy);
+            s16 dist = (s16)(dx * dx + dy * dy);
+
+            if (dist <= core_sq) {
+                frame_words[y][x] = core;
+            } else if (dist <= radius_sq) {
+                frame_words[y][x] = halo;
+            }
+        }
+    }
 }
 
 static void render_model(const ModelData *model, u8 pitch, u8 yaw, u8 roll) {
@@ -833,9 +886,9 @@ int main(void) {
     u8 preview_tick = 0;
 
     init_palettes();
-    clear_fix_map();
     init_sprite_framebuffer();
     render_picker_option(selected_model, pitch, yaw, roll);
+    draw_controls_overlay(menu_active, selected_model);
     ng_wait_vblank();
     blit_frame();
 
@@ -860,6 +913,7 @@ int main(void) {
                 mode_input_lock = 1;
                 entered_mode = 1;
                 render_active_option(selected_model, pitch, yaw, roll);
+                draw_controls_overlay(menu_active, selected_model);
             }
 
             if (!entered_mode) {
@@ -881,6 +935,7 @@ int main(void) {
                 menu_active = 1;
                 changed = 1;
                 render_picker_option(selected_model, pitch, yaw, roll);
+                draw_controls_overlay(menu_active, selected_model);
             } else if (selected_model == BALL_OPTION) {
                 if (update_light_controls(input)) {
                     changed = 1;
