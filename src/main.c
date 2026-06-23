@@ -6,18 +6,33 @@
 #define FIX_VISIBLE_ROWS 28
 #define FIX_VISIBLE_ROW_OFFSET 2
 
-#ifdef RENDERER_SPRITE40
+#ifdef RENDERER_MICROFB
+#define FRAME_W 80
+#define FRAME_H 56
+#define PROJECT_SCALE_X 92
+#define PROJECT_SCALE_Y 76
+#define SPRITE_ZOOM 0x033f
+#define SPRITE_COLUMN_CHUNKS 2
+#define SPRITE_CHUNK_CELLS (FRAME_H / SPRITE_COLUMN_CHUNKS)
+#define SPRITE_BASE_INDEX 1
+#elif defined(RENDERER_SPRITE40)
 #define FRAME_W FIX_COLS
 #define FRAME_H FIX_VISIBLE_ROWS
 #define PROJECT_SCALE_X 46
 #define PROJECT_SCALE_Y 38
 #define SPRITE_ZOOM 0x077f
+#define SPRITE_COLUMN_CHUNKS 1
+#define SPRITE_CHUNK_CELLS FRAME_H
+#define SPRITE_BASE_INDEX 0
 #elif defined(RENDERER_SPRITE)
 #define FRAME_W 20
 #define FRAME_H 14
 #define PROJECT_SCALE_X 23
 #define PROJECT_SCALE_Y 19
 #define SPRITE_ZOOM 0x0fff
+#define SPRITE_COLUMN_CHUNKS 1
+#define SPRITE_CHUNK_CELLS FRAME_H
+#define SPRITE_BASE_INDEX 0
 #else
 #define FRAME_W FIX_COLS
 #define FRAME_H FIX_VISIBLE_ROWS
@@ -28,7 +43,7 @@
 #define Q 8
 #define ONE (1 << Q)
 #define CUBE_RADIUS 120
-#ifdef RENDERER_SPRITE40
+#if defined(RENDERER_SPRITE40) || defined(RENDERER_MICROFB)
 #define CAMERA_DISTANCE_DEFAULT 760
 #define CAMERA_DISTANCE_MIN 420
 #define CAMERA_DISTANCE_MAX 1300
@@ -49,9 +64,14 @@
 #define SPRITE_START_TILE 256
 #define SPRITE_SCREEN_X 0
 #define SPRITE_SCREEN_Y_REGISTER 496
+#define SPRITE_MAX_DISPLAYABLE 381
 
-#if defined(RENDERER_SPRITE) || defined(RENDERER_SPRITE40)
+#if defined(RENDERER_SPRITE) || defined(RENDERER_SPRITE40) || defined(RENDERER_MICROFB)
 #define RENDERER_USES_SPRITES 1
+#endif
+
+#if defined(RENDERER_SPRITE40) || defined(RENDERER_MICROFB)
+#define RENDERER_MASKED_CUBE 1
 #endif
 
 enum {
@@ -74,7 +94,7 @@ enum {
     TILE_EDGE_SHALLOW_UP,
     TILE_EDGE_STEEP_DOWN,
     TILE_EDGE_STEEP_UP,
-#ifdef RENDERER_SPRITE40
+#ifdef RENDERER_MASKED_CUBE
     TILE_MASK_1,
     TILE_MASK_2,
     TILE_MASK_3,
@@ -136,7 +156,7 @@ typedef struct {
     s16 z;
 } FaceOrder;
 
-#ifdef RENDERER_SPRITE40
+#ifdef RENDERER_MASKED_CUBE
 typedef struct {
     s16 base;
     s16 origin_x;
@@ -179,6 +199,9 @@ static const u8 face_adjacency[6][4] = {
 static u16 frame_words[FRAME_H][FRAME_W];
 static u16 prev_words[FRAME_H][FRAME_W];
 static s16 camera_distance = CAMERA_DISTANCE_DEFAULT;
+#ifdef RENDERER_MICROFB
+static u8 frame_dirty = 1;
+#endif
 
 static const s16 sin_lut[64] = {
        0,   25,   50,   74,   98,  121,  142,  162,
@@ -250,8 +273,33 @@ static inline u16 sprite_tile(u16 word) {
     return (u16)(SPRITE_START_TILE + word_tile(word));
 }
 
+#ifdef RENDERER_MICROFB
+static inline u16 sprite_y_word(u16 y, u16 height_tiles) {
+    return (u16)(((((u16)(SPRITE_SCREEN_Y_REGISTER - y)) & 0x01ff) << 7) |
+                 (height_tiles & 0x003f));
+}
+
+static void clear_sprite_state(void) {
+    *REG_VRAMMOD = 0x200;
+    for (u16 sprite = 0; sprite < SPRITE_MAX_DISPLAYABLE; sprite++) {
+        *REG_VRAMADDR = (u16)(ADDR_SCB2 + sprite);
+        *REG_VRAMRW = 0;
+        *REG_VRAMRW = 0;
+        *REG_VRAMRW = 0;
+    }
+}
+#endif
+
 static inline void sprite_poke_cell(u8 col, u8 row, u16 word) {
+#ifdef RENDERER_MICROFB
+    u8 chunk = row / SPRITE_CHUNK_CELLS;
+    u8 local_row = row - (chunk * SPRITE_CHUNK_CELLS);
+    u16 sprite = (u16)(SPRITE_BASE_INDEX + chunk * FRAME_W + col);
+
+    *REG_VRAMADDR = (u16)(ADDR_SCB1 + (sprite * 64) + ((u16)local_row * 2));
+#else
     *REG_VRAMADDR = (u16)(ADDR_SCB1 + ((u16)col * 64) + ((u16)row * 2));
+#endif
     *REG_VRAMMOD = 1;
     *REG_VRAMRW = sprite_tile(word);
     *REG_VRAMRW = sprite_attr(word);
@@ -260,6 +308,35 @@ static inline void sprite_poke_cell(u8 col, u8 row, u16 word) {
 static void init_sprite_framebuffer(void) {
     u16 blank = fix_word(PAL_PAPER, TILE_PAPER);
 
+#ifdef RENDERER_MICROFB
+    clear_sprite_state();
+
+    *REG_VRAMMOD = 1;
+    for (u16 s = 0; s < (FRAME_W * SPRITE_COLUMN_CHUNKS); s++) {
+        u16 sprite = (u16)(SPRITE_BASE_INDEX + s);
+
+        *REG_VRAMADDR = (u16)(ADDR_SCB1 + (sprite * 64));
+        for (u8 y = 0; y < SPRITE_CHUNK_CELLS; y++) {
+            *REG_VRAMRW = sprite_tile(blank);
+            *REG_VRAMRW = sprite_attr(blank);
+        }
+    }
+
+    *REG_VRAMMOD = 0x200;
+    for (u8 chunk = 0; chunk < SPRITE_COLUMN_CHUNKS; chunk++) {
+        u16 y = (u16)(chunk * SPRITE_CHUNK_CELLS * 4);
+        u16 y_word = sprite_y_word(y, SPRITE_CHUNK_CELLS);
+
+        for (u8 x = 0; x < FRAME_W; x++) {
+            u16 sprite = (u16)(SPRITE_BASE_INDEX + chunk * FRAME_W + x);
+
+            *REG_VRAMADDR = (u16)(ADDR_SCB2 + sprite);
+            *REG_VRAMRW = SPRITE_ZOOM;
+            *REG_VRAMRW = y_word;
+            *REG_VRAMRW = (u16)((x * 4) << 7);
+        }
+    }
+#else
     *REG_VRAMMOD = 1;
     for (u8 x = 0; x < FRAME_W; x++) {
         *REG_VRAMADDR = (u16)(ADDR_SCB1 + ((u16)x * 64));
@@ -280,6 +357,7 @@ static void init_sprite_framebuffer(void) {
         *REG_VRAMRW = SPRITE_ZOOM;
         *REG_VRAMRW = 1 << 6;
     }
+#endif
 }
 #endif
 
@@ -360,7 +438,7 @@ static void clear_frame(void) {
 }
 
 static s16 light_for_normal(Vec3 normal) {
-#ifdef RENDERER_SPRITE40
+#ifdef RENDERER_MASKED_CUBE
     Vec3 light = {-150, 70, -150};
 #else
     Vec3 light = {-104, -150, -186};
@@ -371,7 +449,7 @@ static s16 light_for_normal(Vec3 normal) {
                   (s32)normal.z * light.z) >> Q);
 }
 
-#ifdef RENDERER_SPRITE40
+#ifdef RENDERER_MASKED_CUBE
 static u8 face_level_for_intensity(s16 intensity) {
     s16 scaled = (s16)(((s32)(intensity + 130) * 16) / 36);
 
@@ -408,7 +486,7 @@ static u16 face_word_for_intensity(s16 intensity) {
 }
 #endif
 
-#ifndef RENDERER_SPRITE40
+#ifndef RENDERER_MASKED_CUBE
 static u16 face_word_for_normal(Vec3 normal) {
     return face_word_for_intensity(light_for_normal(normal));
 }
@@ -433,7 +511,7 @@ static void sort_faces(FaceOrder order[6]) {
     }
 }
 
-#ifdef RENDERER_SPRITE40
+#ifdef RENDERER_MASKED_CUBE
 static s32 edge_cross_q4(const ProjectedVertex *a, const ProjectedVertex *b, s16 px4, s16 py4) {
     s16 ax4 = (s16)(a->sx << 2);
     s16 ay4 = (s16)(a->sy << 2);
@@ -652,7 +730,7 @@ static void draw_contact_shadow(const ProjectedVertex verts[8]) {
 }
 #endif
 
-#ifndef RENDERER_SPRITE40
+#ifndef RENDERER_MASKED_CUBE
 static s16 edge_cross(s16 ax, s16 ay, s16 bx, s16 by, s16 px, s16 py) {
     return (s16)((s32)(bx - ax) * (py - ay) - (s32)(by - ay) * (px - ax));
 }
@@ -673,7 +751,7 @@ static u8 point_in_quad(const ProjectedVertex verts[8], const Face *face, s16 x,
 }
 #endif
 
-#ifndef RENDERER_SPRITE40
+#ifndef RENDERER_MASKED_CUBE
 static void fill_face(const ProjectedVertex verts[8], const Face *face, u16 word) {
     s16 min_x = FRAME_W - 1;
     s16 max_x = 0;
@@ -703,7 +781,7 @@ static void fill_face(const ProjectedVertex verts[8], const Face *face, u16 word
 }
 #endif
 
-#ifdef RENDERER_SPRITE40
+#ifdef RENDERER_MASKED_CUBE
 static void fill_face_lit(const ProjectedVertex verts[8], const Face *face, u8 face_id,
                           const Vec3 normals[6]) {
     s16 min_x = FRAME_W - 1;
@@ -764,7 +842,7 @@ static void fill_face_lit(const ProjectedVertex verts[8], const Face *face, u8 f
 }
 #endif
 
-#ifndef RENDERER_SPRITE40
+#ifndef RENDERER_MASKED_CUBE
 static u16 edge_word_for_segment(s16 x0, s16 y0, s16 x1, s16 y1) {
     s16 dx = (s16)(x1 - x0);
     s16 dy = (s16)(y1 - y0);
@@ -838,12 +916,12 @@ static void render_cube(u8 pitch, u8 yaw, u8 roll) {
     sort_faces(order);
 
     clear_frame();
-#ifdef RENDERER_SPRITE40
+#ifdef RENDERER_MASKED_CUBE
     draw_contact_shadow(verts);
 #endif
     for (u8 i = 0; i < 6; i++) {
         const Face *face = &cube_faces[order[i].face];
-#ifdef RENDERER_SPRITE40
+#ifdef RENDERER_MASKED_CUBE
         u8 face_id = order[i].face;
         if (normals[face_id].z < 0) {
             fill_face_lit(verts, face, face_id, normals);
@@ -852,7 +930,7 @@ static void render_cube(u8 pitch, u8 yaw, u8 roll) {
         fill_face(verts, face, face_word_for_normal(normals[order[i].face]));
 #endif
     }
-#ifndef RENDERER_SPRITE40
+#ifndef RENDERER_MASKED_CUBE
     for (u8 i = 0; i < 6; i++) {
         u8 face_id = order[i].face;
         if (normals[face_id].z < -16) {
@@ -860,10 +938,34 @@ static void render_cube(u8 pitch, u8 yaw, u8 roll) {
         }
     }
 #endif
+#ifdef RENDERER_MICROFB
+    frame_dirty = 1;
+#endif
 }
 
 static void blit_frame(void) {
-#ifdef RENDERER_USES_SPRITES
+#ifdef RENDERER_MICROFB
+    if (!frame_dirty) return;
+
+    *REG_VRAMMOD = 1;
+    for (u8 chunk = 0; chunk < SPRITE_COLUMN_CHUNKS; chunk++) {
+        u8 row_base = (u8)(chunk * SPRITE_CHUNK_CELLS);
+
+        for (u8 x = 0; x < FRAME_W; x++) {
+            u16 sprite = (u16)(SPRITE_BASE_INDEX + chunk * FRAME_W + x);
+
+            *REG_VRAMADDR = (u16)(ADDR_SCB1 + (sprite * 64));
+            for (u8 row = 0; row < SPRITE_CHUNK_CELLS; row++) {
+                u16 word = frame_words[row_base + row][x];
+
+                *REG_VRAMRW = sprite_tile(word);
+                *REG_VRAMRW = sprite_attr(word);
+            }
+        }
+    }
+
+    frame_dirty = 0;
+#elif defined(RENDERER_USES_SPRITES)
     for (u8 y = 0; y < FRAME_H; y++) {
         for (u8 x = 0; x < FRAME_W; x++) {
             u16 word = frame_words[y][x];
@@ -964,7 +1066,7 @@ static u8 update_controls(u8 input, u8 *pitch, u8 *yaw, u8 *roll) {
 }
 
 int main(void) {
-#ifdef RENDERER_SPRITE40
+#ifdef RENDERER_MASKED_CUBE
     u8 pitch = 54;
     u8 yaw = 56;
 #else

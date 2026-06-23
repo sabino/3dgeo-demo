@@ -13,11 +13,12 @@ Cube geometry is computed live on the 68000. The runtime rotates the cube vertic
 
 The preferred `sprite40` renderer now uses a masked-cell rasterizer: each framebuffer cell is sampled at four sub-cell points, silhouette cells choose one of fifteen generated 2x2 coverage masks, and fully covered cells stay solid. This keeps the cube sprite-backed and low-bandwidth while making the outline read less like large square blocks. `sprite40` also adds a sprite-only soft contact shadow, face-local light gradients, and a default top/side view closer to the reference cube image.
 
-Three renderer modes are available:
+Four renderer modes are available:
 
 - `RENDERER=fix`: 40x28 FIX-cell framebuffer, default.
 - `RENDERER=sprite`: 20x14 native 16x16 sprite-cell framebuffer using C-ROM shade tiles at tile 256 and a sticky sprite chain.
 - `RENDERER=sprite40`: 40x28 sprite-cell framebuffer using half-size sprite shrink, richer shade levels, sub-cell coverage masks, and a subtle contact shadow.
+- `RENDERER=microfb`: 80x56 sprite microframebuffer inspired by Doom64KB's Neo Geo backend. Each logical cell is a 16x16 C-ROM tile shrunk to 4x4 pixels; each column is split into two 28-cell sprite strips so the full framebuffer stays under the per-scanline sprite budget and the 32-tile-per-sprite height limit.
 
 Controls:
 
@@ -36,6 +37,7 @@ The visible FIX area used here is 40x28 cells. The full FIX map is 40x32 cells, 
 make
 make RENDERER=sprite
 make RENDERER=sprite40
+make RENDERER=microfb
 ```
 
 On machines without GnGeo/ngdevkit installed, preview captures can still be regenerated from a Python mirror of the sprite40 renderer:
@@ -52,6 +54,7 @@ These PNGs are for visual review only; final ROM verification should still use G
 make gngeo
 make gngeo-sprite
 make gngeo-sprite40
+make gngeo-microfb
 ```
 
 This project follows the ngdevkit example convention of building a cart zip plus GnGeo hash data and running it with `ngdevkit-gngeo`.
