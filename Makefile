@@ -1,9 +1,8 @@
 PROJECT := 3dgeo
 GAMEROM := 3dgeo
-GAMETITLE := 3Dgeo FIX shade wallpaper
-RENDERER ?= fix
+GAMETITLE := 3Dgeo sprite microframebuffer
 
-BUILDDIR := build/$(RENDERER)
+BUILDDIR := build
 ROM := $(BUILDDIR)/rom
 ASSETDIR := $(BUILDDIR)/assets
 
@@ -22,22 +21,8 @@ NGLDFLAGS := $(shell $(PKGCONFIG) --libs ngdevkit 2>/dev/null)
 NGSHAREDIR := $(shell $(PKGCONFIG) --variable=sharedir ngdevkit 2>/dev/null)
 GNGEO_DATA := /usr/share/ngdevkit-gngeo/gngeo_data.zip
 
-ifeq ($(RENDERER),sprite)
-GAMETITLE := 3Dgeo sprite shade cube
-RENDERER_CFLAGS := -DRENDERER_SPRITE=1
-else ifeq ($(RENDERER),sprite40)
-GAMETITLE := 3Dgeo sprite40 shade cube
-RENDERER_CFLAGS := -DRENDERER_SPRITE40=1
-else ifeq ($(RENDERER),microfb)
-GAMETITLE := 3Dgeo sprite microframebuffer
-RENDERER_CFLAGS := -DRENDERER_MICROFB=1
-else ifneq ($(RENDERER),fix)
-$(error unsupported RENDERER=$(RENDERER), expected fix, sprite, sprite40, or microfb)
-endif
-
 CFLAGS ?= -std=c99 -fomit-frame-pointer -O2 -g -Wall -Wextra
 CFLAGS += $(NGCFLAGS) -Isrc
-CFLAGS += $(RENDERER_CFLAGS)
 LDFLAGS += $(NGLDFLAGS)
 
 PROMSIZE := 1048576
@@ -57,34 +42,9 @@ CART := $(ROM)/$(GAMEROM).zip
 GNGEO_HASH := $(ROM)/gngeo_data.zip
 MAME_HASH := $(ROM)/neogeo.xml
 
-.PHONY: all cart assets captures-preview check-ngdevkit gngeo run clean distclean
-.PHONY: fix sprite sprite40 microfb gngeo-fix gngeo-sprite gngeo-sprite40 gngeo-microfb
+.PHONY: all cart assets check-ngdevkit gngeo run clean distclean
 
 all: cart
-
-fix:
-	$(MAKE) RENDERER=fix all
-
-sprite:
-	$(MAKE) RENDERER=sprite all
-
-sprite40:
-	$(MAKE) RENDERER=sprite40 all
-
-microfb:
-	$(MAKE) RENDERER=microfb all
-
-gngeo-fix:
-	$(MAKE) RENDERER=fix gngeo
-
-gngeo-sprite:
-	$(MAKE) RENDERER=sprite gngeo
-
-gngeo-sprite40:
-	$(MAKE) RENDERER=sprite40 gngeo
-
-gngeo-microfb:
-	$(MAKE) RENDERER=microfb gngeo
 
 cart: check-ngdevkit $(CART) $(GNGEO_HASH) $(MAME_HASH)
 
@@ -96,9 +56,6 @@ check-ngdevkit:
 	@test -f "$(NGSHAREDIR)/nullsound_driver.ihx" || { echo "missing ngdevkit nullsound_driver.ihx"; exit 1; }
 
 assets: $(SROM1)
-
-captures-preview:
-	$(PYTHON) tools/render_sprite40_preview.py build/captures
 
 $(BUILDDIR) $(ROM) $(ASSETDIR):
 	mkdir -p $@
