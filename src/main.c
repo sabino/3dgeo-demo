@@ -210,6 +210,26 @@ static void fix_puts(u8 col, u8 row, u8 palette, const char *text) {
     }
 }
 
+static void fix_put_model_name(u8 col, u8 row, u8 palette, const char *name) {
+    while (*name && col < FIX_COLS) {
+        char ch = *name++;
+        u8 tile;
+
+        if (ch >= 'a' && ch <= 'z') {
+            tile = (u8)(ch - 'a' + 'A');
+        } else if (ch == '-' || ch == '_') {
+            tile = ' ';
+        } else {
+            tile = (u8)ch;
+        }
+
+        if (tile >= 32 && tile < 128) {
+            fix_poke_word(col, row, fix_word(palette, tile));
+        }
+        col++;
+    }
+}
+
 static void draw_controls_overlay(u8 menu_active, u8 selected_option) {
     u8 palette = (u8)((!menu_active && selected_option == BALL_OPTION)
         ? PAL_SHADOW_LIGHT
@@ -219,7 +239,12 @@ static void draw_controls_overlay(u8 menu_active, u8 selected_option) {
 
     if (menu_active) {
         fix_puts(2, 2, palette, "SELECT MODEL WITH DPAD");
-        fix_puts(2, 3, palette, "A ENTER");
+        fix_puts(2, 3, palette, "A ENTER   MODEL: ");
+        if (selected_option == BALL_OPTION) {
+            fix_puts(19, 3, palette, "BALL LIGHT");
+        } else {
+            fix_put_model_name(19, 3, palette, models[selected_option].name);
+        }
     } else if (selected_option == BALL_OPTION) {
         fix_puts(2, 2, palette, "BALL: DPAD MOVE LIGHT");
         fix_puts(2, 3, palette, "A/B DEPTH   C/D ZOOM");

@@ -6,7 +6,8 @@ BUILDDIR := build
 ROM := $(BUILDDIR)/rom
 ASSETDIR := $(BUILDDIR)/assets
 GENERATEDDIR := $(BUILDDIR)/generated
-MODEL_OBJS := assets/models/cube.obj assets/models/pyramid.obj assets/models/tetrahedron.obj
+PRIMITIVE_OBJS := assets/models/ball.obj assets/models/donut.obj assets/models/cone.obj assets/models/cylinder.obj
+MODEL_OBJS := assets/models/cube.obj assets/models/pyramid.obj assets/models/tetrahedron.obj $(PRIMITIVE_OBJS)
 MODEL_DATA := $(GENERATEDDIR)/model_data.h
 
 M68KGCC ?= m68k-neogeo-elf-gcc
@@ -62,6 +63,9 @@ assets: $(SROM1)
 
 $(BUILDDIR) $(ROM) $(ASSETDIR) $(GENERATEDDIR):
 	mkdir -p $@
+
+$(PRIMITIVE_OBJS): tools/make_primitive_objs.py
+	$(PYTHON) tools/make_primitive_objs.py
 
 $(MODEL_DATA): FORCE tools/obj_to_model.py $(MODEL_OBJS) | $(GENERATEDDIR)
 	$(PYTHON) tools/obj_to_model.py $(MODEL_OBJS) $@
