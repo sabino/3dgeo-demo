@@ -54,6 +54,7 @@ The hot path avoids sub-cell coverage sampling. Each polygon edge computes one f
 ## Controls
 
 - GnGeo keyboard mapping: arrow keys are the Neo Geo D-pad, `Z`/`X`/`A`/`S` are Neo Geo A/B/C/D, `1` is START, and `3` is COIN.
+- Input is read from two hardware bytes: D-pad/buttons come from `REG_P1CNT`, while START comes from `REG_STATUS_B`. This matters because ngdevkit's `CNT_UP` and `CNT_START1` constants both use bit 0 for different input bytes.
 - Picker: left/right selects the option, START or Neo Geo A enters it.
 - Cube/pyramid/tetrahedron: D-pad rotates yaw/pitch, Neo Geo A/B rolls, and Neo Geo C/D zooms.
 - BALL: D-pad moves the white light on screen, Neo Geo A/B moves the light in depth, Neo Geo C/D zooms, and START returns to the picker.

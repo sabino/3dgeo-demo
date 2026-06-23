@@ -735,6 +735,10 @@ static u8 read_p1_input(void) {
     return (u8)~(*REG_P1CNT);
 }
 
+static u8 read_p1_status(void) {
+    return (u8)~(*REG_STATUS_B);
+}
+
 static u8 pressed(u8 input, u8 previous_input, u8 mask) {
     return (u8)((input & mask) && !(previous_input & mask));
 }
@@ -825,6 +829,7 @@ int main(void) {
     u8 menu_active = 1;
     u8 mode_input_lock = 0;
     u8 previous_input = 0;
+    u8 previous_status = 0;
     u8 preview_tick = 0;
 
     init_palettes();
@@ -836,6 +841,7 @@ int main(void) {
 
     for (;;) {
         u8 input = read_p1_input();
+        u8 status = read_p1_status();
         u8 changed = 0;
 
         if (menu_active) {
@@ -849,7 +855,8 @@ int main(void) {
                 changed = 1;
             }
 
-            if (pressed(input, previous_input, CNT_START1 | CNT_A)) {
+            if (pressed(status, previous_status, CNT_START1) ||
+                pressed(input, previous_input, CNT_A)) {
                 menu_active = 0;
                 mode_input_lock = 1;
                 entered_mode = 1;
@@ -870,8 +877,8 @@ int main(void) {
             }
         } else {
             if (mode_input_lock) {
-                if (input == 0) mode_input_lock = 0;
-            } else if (pressed(input, previous_input, CNT_START1)) {
+                if (input == 0 && status == 0) mode_input_lock = 0;
+            } else if (pressed(status, previous_status, CNT_START1)) {
                 menu_active = 1;
                 changed = 1;
                 render_picker_option(selected_model, pitch, yaw, roll);
@@ -895,6 +902,7 @@ int main(void) {
         }
 
         previous_input = input;
+        previous_status = status;
         ng_wait_vblank();
         blit_frame();
     }
