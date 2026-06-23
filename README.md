@@ -12,14 +12,14 @@ Controls in `make gngeo`:
 
 - Neo Geo D-pad: keyboard arrow keys
 - A/B/C/D: `Z` / `X` / `A` / `S`
-- START: `1`
+- START: `1` (not used by this ROM)
 - COIN: `3`
 - emulator menu: `Esc`
 
 ROM controls:
 
 - picker left/right: choose cube, pyramid, tetrahedron, or BALL
-- picker START or A: enter selected mode
+- picker A: enter selected mode
 - cube/pyramid/tetrahedron left/right: yaw
 - cube/pyramid/tetrahedron up/down: pitch
 - cube/pyramid/tetrahedron A/B: roll
@@ -27,7 +27,7 @@ ROM controls:
 - BALL left/right/up/down: move the light ball on screen
 - BALL A/B: move the light nearer/farther in depth
 - BALL C/D: zoom in/out
-- START: return to picker
+- COIN: return to picker
 
 ## Build
 
