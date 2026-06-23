@@ -126,7 +126,7 @@ def cross(a: tuple[float, float, float], b: tuple[float, float, float]) -> tuple
 
 
 def make_normal(
-    vertices: list[tuple[int, int, int]], a: int, b: int, c: int
+    vertices: list[tuple[int, int, int]], a: int, b: int, c: int, convex_normal_fix: bool
 ) -> tuple[int, int, int]:
     va = vertices[a]
     vb = vertices[b]
@@ -140,7 +140,7 @@ def make_normal(
         (va[2] + vb[2] + vc[2]) / 3.0,
     )
 
-    if normal[0] * center[0] + normal[1] * center[1] + normal[2] * center[2] < 0.0:
+    if convex_normal_fix and normal[0] * center[0] + normal[1] * center[1] + normal[2] * center[2] < 0.0:
         normal = (-normal[0], -normal[1], -normal[2])
 
     length = math.sqrt(normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2])
@@ -155,7 +155,7 @@ def make_normal(
 
 
 def triangulate(
-    vertices: list[tuple[int, int, int]], faces: list[list[int]]
+    vertices: list[tuple[int, int, int]], faces: list[list[int]], convex_normal_fix: bool
 ) -> tuple[
     list[tuple[int, int, int, tuple[int, int, int]]],
     list[tuple[int, int, tuple[int, int, int]]],
@@ -163,12 +163,12 @@ def triangulate(
     tris = []
     edges = []
     for face in faces:
-        face_normal = make_normal(vertices, face[0], face[1], face[2])
+        face_normal = make_normal(vertices, face[0], face[1], face[2], convex_normal_fix)
         for i in range(1, len(face) - 1):
             a = face[0]
             b = face[i]
             c = face[i + 1]
-            tris.append((a, b, c, make_normal(vertices, a, b, c)))
+            tris.append((a, b, c, make_normal(vertices, a, b, c, convex_normal_fix)))
         for i, a in enumerate(face):
             edges.append((a, face[(i + 1) % len(face)], face_normal))
 
@@ -182,7 +182,8 @@ def triangulate(
 def convert_model(source: Path) -> ConvertedModel:
     raw_vertices, faces = load_obj(source)
     vertices = normalize_vertices(raw_vertices)
-    tris, edges = triangulate(vertices, faces)
+    convex_normal_fix = source.stem != "donut"
+    tris, edges = triangulate(vertices, faces, convex_normal_fix)
     return ConvertedModel(source, vertices, tris, edges)
 
 
