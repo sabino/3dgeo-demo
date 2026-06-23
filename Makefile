@@ -1,13 +1,12 @@
 PROJECT := 3dgeo
 GAMEROM := 3dgeo
 GAMETITLE := 3Dgeo sprite microframebuffer
-MODEL ?= cube
 
 BUILDDIR := build
 ROM := $(BUILDDIR)/rom
 ASSETDIR := $(BUILDDIR)/assets
 GENERATEDDIR := $(BUILDDIR)/generated
-MODEL_OBJ := assets/models/$(MODEL).obj
+MODEL_OBJS := assets/models/cube.obj assets/models/pyramid.obj assets/models/tetrahedron.obj
 MODEL_DATA := $(GENERATEDDIR)/model_data.h
 
 M68KGCC ?= m68k-neogeo-elf-gcc
@@ -64,8 +63,8 @@ assets: $(SROM1)
 $(BUILDDIR) $(ROM) $(ASSETDIR) $(GENERATEDDIR):
 	mkdir -p $@
 
-$(MODEL_DATA): FORCE tools/obj_to_model.py $(MODEL_OBJ) | $(GENERATEDDIR)
-	$(PYTHON) tools/obj_to_model.py $(MODEL_OBJ) $@
+$(MODEL_DATA): FORCE tools/obj_to_model.py $(MODEL_OBJS) | $(GENERATEDDIR)
+	$(PYTHON) tools/obj_to_model.py $(MODEL_OBJS) $@
 
 $(ASSETDIR)/shade-fix.gif: tools/make_fix_tiles.py | $(ASSETDIR)
 	$(PYTHON) $< $@

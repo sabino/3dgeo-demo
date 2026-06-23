@@ -104,6 +104,16 @@ typedef struct {
 } ModelEdge;
 
 typedef struct {
+    const char *name;
+    const ModelVertex *vertices;
+    u8 vertex_count;
+    const ModelTri *tris;
+    u8 tri_count;
+    const ModelEdge *edges;
+    u8 edge_count;
+} ModelData;
+
+typedef struct {
     u8 tri;
     s16 z;
 } TriOrder;
@@ -312,13 +322,43 @@ static u16 face_word_for_intensity(s16 intensity) {
     return fix_word((u8)(PAL_FACE_0 + face_level_for_intensity(intensity)), TILE_SHADE_9);
 }
 
-static s16 tri_depth(const ProjectedVertex verts[MODEL_VERTEX_COUNT], const ModelTri *tri) {
+static void frame_rect(s16 x0, s16 y0, s16 x1, s16 y1, u16 word) {
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 >= FRAME_W) x1 = FRAME_W - 1;
+    if (y1 >= FRAME_H) y1 = FRAME_H - 1;
+    if (x0 > x1 || y0 > y1) return;
+
+    for (s16 y = y0; y <= y1; y++) {
+        for (s16 x = x0; x <= x1; x++) {
+            frame_words[y][x] = word;
+        }
+    }
+}
+
+static void draw_menu_markers(u8 selected_model) {
+    const s16 cell_w = 7;
+    const s16 marker_w = 5;
+    const s16 y = FRAME_H - 5;
+    s16 start_x = (s16)((FRAME_W - ((s16)MODEL_COUNT * cell_w - 2)) >> 1);
+
+    for (u8 i = 0; i < MODEL_COUNT; i++) {
+        s16 x = (s16)(start_x + i * cell_w);
+        u16 word = (i == selected_model)
+            ? fix_word(PAL_EDGE, TILE_SHADE_9)
+            : fix_word(PAL_FACE_8, TILE_SHADE_3);
+
+        frame_rect(x, y, (s16)(x + marker_w - 1), (s16)(y + 1), word);
+    }
+}
+
+static s16 tri_depth(const ProjectedVertex *verts, const ModelTri *tri) {
     s32 sum = (s32)verts[tri->a].z + verts[tri->b].z + verts[tri->c].z;
     return (s16)(sum / 3);
 }
 
-static void sort_tris(TriOrder order[MODEL_TRI_COUNT]) {
-    for (u16 i = 1; i < MODEL_TRI_COUNT; i++) {
+static void sort_tris(TriOrder *order, u8 count) {
+    for (u16 i = 1; i < count; i++) {
         TriOrder cur = order[i];
         s16 j = (s16)i - 1;
         while (j >= 0 && order[j].z < cur.z) {
@@ -329,7 +369,7 @@ static void sort_tris(TriOrder order[MODEL_TRI_COUNT]) {
     }
 }
 
-static s16 light_for_tri_position(const ProjectedVertex verts[MODEL_VERTEX_COUNT], const ModelTri *tri, Vec3 normal) {
+static s16 light_for_tri_position(const ProjectedVertex *verts, const ModelTri *tri, Vec3 normal) {
     s16 cx = 0;
     s16 cy = 0;
     s16 cz = 0;
@@ -382,7 +422,7 @@ static void add_edge_spans(s16 left[FRAME_H], s16 right[FRAME_H],
     }
 }
 
-static void fill_tri_spans(const ProjectedVertex verts[MODEL_VERTEX_COUNT], const ModelTri *tri, Vec3 normal) {
+static void fill_tri_spans(const ProjectedVertex *verts, const ModelTri *tri, Vec3 normal) {
     static s16 left[FRAME_H];
     static s16 right[FRAME_H];
     s16 min_y = FRAME_H - 1;
@@ -431,13 +471,13 @@ static void fill_tri_spans(const ProjectedVertex verts[MODEL_VERTEX_COUNT], cons
     }
 }
 
-static void draw_contact_shadow(const ProjectedVertex verts[MODEL_VERTEX_COUNT]) {
+static void draw_contact_shadow(const ProjectedVertex *verts, u8 vertex_count) {
     s16 min_x = FRAME_W - 1;
     s16 max_x = 0;
     s16 max_y = 0;
     u16 shadow = fix_word(PAL_SHADOW_DARK, TILE_SHADE_3);
 
-    for (u8 i = 0; i < MODEL_VERTEX_COUNT; i++) {
+    for (u8 i = 0; i < vertex_count; i++) {
         if (verts[i].sx < min_x) min_x = verts[i].sx;
         if (verts[i].sx > max_x) max_x = verts[i].sx;
         if (verts[i].sy > max_y) max_y = verts[i].sy;
@@ -497,12 +537,12 @@ static void line(s16 x0, s16 y0, s16 x1, s16 y1, u16 word) {
     }
 }
 
-static void draw_model_edges(const ProjectedVertex verts[MODEL_VERTEX_COUNT],
-                             const Vec3 edge_normals[MODEL_EDGE_COUNT]) {
+static void draw_model_edges(const ProjectedVertex *verts, const ModelData *model,
+                             const Vec3 *edge_normals) {
     u16 edge = fix_word(PAL_EDGE, TILE_SHADE_8);
 
-    for (u8 i = 0; i < MODEL_EDGE_COUNT; i++) {
-        const ModelEdge *model_edge = &model_edges[i];
+    for (u8 i = 0; i < model->edge_count; i++) {
+        const ModelEdge *model_edge = &model->edges[i];
         const ProjectedVertex *a = &verts[model_edge->a];
         const ProjectedVertex *b = &verts[model_edge->b];
 
@@ -511,44 +551,50 @@ static void draw_model_edges(const ProjectedVertex verts[MODEL_VERTEX_COUNT],
     }
 }
 
-static void render_model(u8 pitch, u8 yaw, u8 roll) {
-    ProjectedVertex verts[MODEL_VERTEX_COUNT];
-    Vec3 normals[MODEL_TRI_COUNT];
-    Vec3 edge_normals[MODEL_EDGE_COUNT];
-    TriOrder order[MODEL_TRI_COUNT];
+static void render_model(const ModelData *model, u8 pitch, u8 yaw, u8 roll) {
+    ProjectedVertex verts[MODEL_MAX_VERTEX_COUNT];
+    Vec3 normals[MODEL_MAX_TRI_COUNT];
+    Vec3 edge_normals[MODEL_MAX_EDGE_COUNT];
+    TriOrder order[MODEL_MAX_TRI_COUNT];
 
-    for (u8 i = 0; i < MODEL_VERTEX_COUNT; i++) {
+    for (u8 i = 0; i < model->vertex_count; i++) {
         Vec3 p;
-        p.x = model_vertices[i].x;
-        p.y = model_vertices[i].y;
-        p.z = model_vertices[i].z;
+        p.x = model->vertices[i].x;
+        p.y = model->vertices[i].y;
+        p.z = model->vertices[i].z;
         verts[i] = project_vertex(rotate_vec(p, pitch, yaw, roll));
     }
 
-    for (u8 i = 0; i < MODEL_TRI_COUNT; i++) {
-        normals[i] = rotate_vec(model_tris[i].normal, pitch, yaw, roll);
+    for (u8 i = 0; i < model->tri_count; i++) {
+        normals[i] = rotate_vec(model->tris[i].normal, pitch, yaw, roll);
         order[i].tri = i;
-        order[i].z = tri_depth(verts, &model_tris[i]);
+        order[i].z = tri_depth(verts, &model->tris[i]);
     }
-    sort_tris(order);
+    sort_tris(order, model->tri_count);
 
-    for (u8 i = 0; i < MODEL_EDGE_COUNT; i++) {
-        edge_normals[i] = rotate_vec(model_edges[i].normal, pitch, yaw, roll);
+    for (u8 i = 0; i < model->edge_count; i++) {
+        edge_normals[i] = rotate_vec(model->edges[i].normal, pitch, yaw, roll);
     }
 
     clear_frame();
-    draw_contact_shadow(verts);
+    draw_contact_shadow(verts, model->vertex_count);
 
-    for (u8 i = 0; i < MODEL_TRI_COUNT; i++) {
+    for (u8 i = 0; i < model->tri_count; i++) {
         u8 tri_id = order[i].tri;
 
         if (normals[tri_id].z < 0) {
-            fill_tri_spans(verts, &model_tris[tri_id], normals[tri_id]);
+            fill_tri_spans(verts, &model->tris[tri_id], normals[tri_id]);
         }
     }
 
-    draw_model_edges(verts, edge_normals);
+    draw_model_edges(verts, model, edge_normals);
 
+    frame_dirty = 1;
+}
+
+static void render_model_picker(u8 selected_model, u8 pitch, u8 yaw, u8 roll) {
+    render_model(&models[selected_model], pitch, yaw, roll);
+    draw_menu_markers(selected_model);
     frame_dirty = 1;
 }
 
@@ -577,6 +623,10 @@ static void blit_frame(void) {
 
 static u8 read_p1_input(void) {
     return (u8)~(*REG_P1CNT);
+}
+
+static u8 pressed(u8 input, u8 previous_input, u8 mask) {
+    return (u8)((input & mask) && !(previous_input & mask));
 }
 
 static u8 update_controls(u8 input, u8 *pitch, u8 *yaw, u8 *roll) {
@@ -622,18 +672,58 @@ int main(void) {
     u8 pitch = 54;
     u8 yaw = 56;
     u8 roll = 0;
+    u8 selected_model = 0;
+    u8 menu_active = 1;
+    u8 previous_input = 0;
+    u8 preview_tick = 0;
 
     init_palettes();
     clear_fix_map();
     init_sprite_framebuffer();
-    render_model(pitch, yaw, roll);
+    render_model_picker(selected_model, pitch, yaw, roll);
     ng_wait_vblank();
     blit_frame();
 
     for (;;) {
-        if (update_controls(read_p1_input(), &pitch, &yaw, &roll)) {
-            render_model(pitch, yaw, roll);
+        u8 input = read_p1_input();
+        u8 changed = 0;
+
+        if (menu_active) {
+            if (pressed(input, previous_input, CNT_LEFT)) {
+                selected_model = (u8)((selected_model + MODEL_COUNT - 1) % MODEL_COUNT);
+                changed = 1;
+            } else if (pressed(input, previous_input, CNT_RIGHT)) {
+                selected_model = (u8)((selected_model + 1) % MODEL_COUNT);
+                changed = 1;
+            }
+
+            if (pressed(input, previous_input, CNT_START1 | CNT_A)) {
+                menu_active = 0;
+                changed = 1;
+            }
+
+            preview_tick++;
+            if (preview_tick >= 4) {
+                preview_tick = 0;
+                yaw = (u8)((yaw + 1) & ANGLE_MASK);
+                changed = 1;
+            }
+
+            if (changed) {
+                render_model_picker(selected_model, pitch, yaw, roll);
+            }
+        } else {
+            if (pressed(input, previous_input, CNT_START1)) {
+                menu_active = 1;
+                changed = 1;
+                render_model_picker(selected_model, pitch, yaw, roll);
+            } else if (update_controls(input, &pitch, &yaw, &roll)) {
+                changed = 1;
+                render_model(&models[selected_model], pitch, yaw, roll);
+            }
         }
+
+        previous_input = input;
         ng_wait_vblank();
         blit_frame();
     }

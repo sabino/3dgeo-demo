@@ -26,7 +26,7 @@ Runtime cell words use the Neo Geo sprite tile index for coverage/pattern and th
 
 ## Render Loop
 
-OBJ models are converted before compilation by `tools/obj_to_model.py`. The converter parses vertices and faces, normalizes the bounding box around the origin, triangulates faces, and emits `build/generated/model_data.h` with fixed-point vertices and normals. The 68000 runtime receives compact arrays only; it does not parse OBJ text.
+OBJ models are converted before compilation by `tools/obj_to_model.py`. The converter parses vertices and faces, normalizes the bounding box around the origin, triangulates faces, and emits `build/generated/model_data.h` with fixed-point vertices, normals, original perimeter edges, and a model table. The 68000 runtime receives compact arrays only; it does not parse OBJ text.
 
 Each frame does:
 
@@ -44,9 +44,8 @@ The hot path avoids sub-cell coverage sampling. Each polygon edge computes one f
 
 ## OBJ Import Limits
 
-- Default model: `assets/models/cube.obj`.
-- Alternate samples: `assets/models/pyramid.obj` and `assets/models/tetrahedron.obj`.
-- Build selection: `make MODEL=pyramid` or `make MODEL=tetrahedron`.
+- Bundled models: `assets/models/cube.obj`, `assets/models/pyramid.obj`, and `assets/models/tetrahedron.obj`.
+- The ROM starts in a picker: left/right selects the model, START/A enters rotation mode, and START returns to the picker.
 - Runtime indices are `u8`, so the converter caps imports at 255 vertices and 255 triangles.
 - Materials, texture coordinates, and OBJ normals are ignored for now.
 - Normals are generated from triangle geometry and stored in Q8 fixed point.
