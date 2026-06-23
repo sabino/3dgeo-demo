@@ -1,6 +1,6 @@
 # 3Dgeo Technical Notes
 
-3Dgeo now uses one renderer: a Doom64KB-style Neo Geo sprite microframebuffer.
+3Dgeo now uses one renderer: a Doom64KB-style Neo Geo sprite microframebuffer fed by build-time OBJ model data.
 
 ## Framebuffer Layout
 
@@ -26,19 +26,30 @@ Runtime cell words use the Neo Geo sprite tile index for coverage/pattern and th
 
 ## Render Loop
 
+OBJ models are converted before compilation by `tools/obj_to_model.py`. The converter parses vertices and faces, normalizes the bounding box around the origin, triangulates faces, and emits `build/generated/model_data.h` with fixed-point vertices and normals. The 68000 runtime receives compact arrays only; it does not parse OBJ text.
+
 Each frame does:
 
-1. Rotate eight cube vertices and six face normals with fixed-point sine/cosine tables.
+1. Rotate imported model vertices and triangle normals with fixed-point sine/cosine tables.
 2. Project vertices into the 80x56 logical framebuffer.
-3. Sort faces by average depth.
+3. Sort triangles by average depth.
 4. Clear the logical framebuffer to white.
 5. Draw a cheap projected contact shadow.
-6. Fill visible faces with an edge-walked span rasterizer.
-7. Shade each face from a virtual point-light cue plus a small screen-space row bias.
-8. Draw thin visible face edges for readability.
+6. Fill visible triangles with an edge-walked span rasterizer.
+7. Shade each triangle from a virtual point-light cue plus a small screen-space row bias.
+8. Draw thin visible triangle edges for readability.
 9. Upload the 80x56 framebuffer as 160 vertical sprite strips.
 
 The hot path avoids sub-cell coverage sampling. Each polygon edge computes one fixed-point x step, then face rows are filled as simple spans. This is intentionally closer to Doom64KB's simple framebuffer writes than the older high-detail masked-cell experiment.
+
+## OBJ Import Limits
+
+- Default model: `assets/models/cube.obj`.
+- Alternate samples: `assets/models/pyramid.obj` and `assets/models/tetrahedron.obj`.
+- Build selection: `make MODEL=pyramid` or `make MODEL=tetrahedron`.
+- Runtime indices are `u8`, so the converter caps imports at 255 vertices and 255 triangles.
+- Materials, texture coordinates, and OBJ normals are ignored for now.
+- Normals are generated from triangle geometry and stored in Q8 fixed point.
 
 ## Controls
 

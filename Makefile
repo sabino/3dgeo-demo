@@ -1,10 +1,14 @@
 PROJECT := 3dgeo
 GAMEROM := 3dgeo
 GAMETITLE := 3Dgeo sprite microframebuffer
+MODEL ?= cube
 
 BUILDDIR := build
 ROM := $(BUILDDIR)/rom
 ASSETDIR := $(BUILDDIR)/assets
+GENERATEDDIR := $(BUILDDIR)/generated
+MODEL_OBJ := assets/models/$(MODEL).obj
+MODEL_DATA := $(GENERATEDDIR)/model_data.h
 
 M68KGCC ?= m68k-neogeo-elf-gcc
 M68KOBJCOPY ?= m68k-neogeo-elf-objcopy
@@ -22,7 +26,7 @@ NGSHAREDIR := $(shell $(PKGCONFIG) --variable=sharedir ngdevkit 2>/dev/null)
 GNGEO_DATA := /usr/share/ngdevkit-gngeo/gngeo_data.zip
 
 CFLAGS ?= -std=c99 -fomit-frame-pointer -O2 -g -Wall -Wextra
-CFLAGS += $(NGCFLAGS) -Isrc
+CFLAGS += $(NGCFLAGS) -Isrc -I$(GENERATEDDIR)
 LDFLAGS += $(NGLDFLAGS)
 
 PROMSIZE := 1048576
@@ -42,7 +46,7 @@ CART := $(ROM)/$(GAMEROM).zip
 GNGEO_HASH := $(ROM)/gngeo_data.zip
 MAME_HASH := $(ROM)/neogeo.xml
 
-.PHONY: all cart assets check-ngdevkit gngeo run clean distclean
+.PHONY: all cart assets check-ngdevkit gngeo run clean distclean FORCE
 
 all: cart
 
@@ -57,8 +61,11 @@ check-ngdevkit:
 
 assets: $(SROM1)
 
-$(BUILDDIR) $(ROM) $(ASSETDIR):
+$(BUILDDIR) $(ROM) $(ASSETDIR) $(GENERATEDDIR):
 	mkdir -p $@
+
+$(MODEL_DATA): FORCE tools/obj_to_model.py $(MODEL_OBJ) | $(GENERATEDDIR)
+	$(PYTHON) tools/obj_to_model.py $(MODEL_OBJ) $@
 
 $(ASSETDIR)/shade-fix.gif: tools/make_fix_tiles.py | $(ASSETDIR)
 	$(PYTHON) $< $@
@@ -71,6 +78,8 @@ $(ASSETDIR)/shade-sprite.gif: tools/make_sprite_tiles.py | $(ASSETDIR)
 
 $(ASSETDIR)/shade-sprite.c1 $(ASSETDIR)/shade-sprite.c2 &: $(ASSETDIR)/shade-sprite.gif
 	$(TILETOOL) --sprite -c $< -o $(ASSETDIR)/shade-sprite.c1 $(ASSETDIR)/shade-sprite.c2 -s $(CROMSIZE)
+
+$(BUILDDIR)/main.o: $(MODEL_DATA)
 
 $(BUILDDIR)/%.o: src/%.c | $(BUILDDIR)
 	mkdir -p $(dir $@)

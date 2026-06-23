@@ -11,7 +11,6 @@
 
 #define Q 8
 #define ONE (1 << Q)
-#define CUBE_RADIUS 120
 #define CAMERA_DISTANCE_DEFAULT 760
 #define CAMERA_DISTANCE_MIN 420
 #define CAMERA_DISTANCE_MAX 1300
@@ -86,14 +85,30 @@ typedef struct {
 } ProjectedVertex;
 
 typedef struct {
-    u8 v[4];
-    Vec3 normal;
-} Face;
+    s16 x;
+    s16 y;
+    s16 z;
+} ModelVertex;
 
 typedef struct {
-    u8 face;
+    u8 a;
+    u8 b;
+    u8 c;
+    Vec3 normal;
+} ModelTri;
+
+typedef struct {
+    u8 a;
+    u8 b;
+    Vec3 normal;
+} ModelEdge;
+
+typedef struct {
+    u8 tri;
     s16 z;
-} FaceOrder;
+} TriOrder;
+
+#include "model_data.h"
 
 static u16 frame_words[FRAME_H][FRAME_W];
 static s16 camera_distance = CAMERA_DISTANCE_DEFAULT;
@@ -108,26 +123,6 @@ static const s16 sin_lut[64] = {
     -181, -198, -213, -226, -237, -245, -251, -255,
     -256, -255, -251, -245, -237, -226, -213, -198,
     -181, -162, -142, -121,  -98,  -74,  -50,  -25,
-};
-
-static const Vec3 cube_vertices[8] = {
-    {-CUBE_RADIUS, -CUBE_RADIUS, -CUBE_RADIUS},
-    { CUBE_RADIUS, -CUBE_RADIUS, -CUBE_RADIUS},
-    { CUBE_RADIUS,  CUBE_RADIUS, -CUBE_RADIUS},
-    {-CUBE_RADIUS,  CUBE_RADIUS, -CUBE_RADIUS},
-    {-CUBE_RADIUS, -CUBE_RADIUS,  CUBE_RADIUS},
-    { CUBE_RADIUS, -CUBE_RADIUS,  CUBE_RADIUS},
-    { CUBE_RADIUS,  CUBE_RADIUS,  CUBE_RADIUS},
-    {-CUBE_RADIUS,  CUBE_RADIUS,  CUBE_RADIUS},
-};
-
-static const Face cube_faces[6] = {
-    {{0, 1, 2, 3}, {  0,   0, -ONE}},
-    {{4, 5, 6, 7}, {  0,   0,  ONE}},
-    {{0, 1, 5, 4}, {  0, -ONE,   0}},
-    {{3, 2, 6, 7}, {  0,  ONE,   0}},
-    {{0, 3, 7, 4}, {-ONE,   0,   0}},
-    {{1, 2, 6, 5}, { ONE,   0,   0}},
 };
 
 static inline s16 qmul(s16 a, s16 b) {
@@ -317,18 +312,15 @@ static u16 face_word_for_intensity(s16 intensity) {
     return fix_word((u8)(PAL_FACE_0 + face_level_for_intensity(intensity)), TILE_SHADE_9);
 }
 
-static s16 face_depth(const ProjectedVertex verts[8], const Face *face) {
-    s32 sum = 0;
-    for (u8 i = 0; i < 4; i++) {
-        sum += verts[face->v[i]].z;
-    }
-    return (s16)(sum >> 2);
+static s16 tri_depth(const ProjectedVertex verts[MODEL_VERTEX_COUNT], const ModelTri *tri) {
+    s32 sum = (s32)verts[tri->a].z + verts[tri->b].z + verts[tri->c].z;
+    return (s16)(sum / 3);
 }
 
-static void sort_faces(FaceOrder order[6]) {
-    for (u8 i = 1; i < 6; i++) {
-        FaceOrder cur = order[i];
-        s8 j = (s8)i - 1;
+static void sort_tris(TriOrder order[MODEL_TRI_COUNT]) {
+    for (u16 i = 1; i < MODEL_TRI_COUNT; i++) {
+        TriOrder cur = order[i];
+        s16 j = (s16)i - 1;
         while (j >= 0 && order[j].z < cur.z) {
             order[j + 1] = order[j];
             j--;
@@ -337,7 +329,7 @@ static void sort_faces(FaceOrder order[6]) {
     }
 }
 
-static s16 light_for_face_position(const ProjectedVertex verts[8], const Face *face, Vec3 normal) {
+static s16 light_for_tri_position(const ProjectedVertex verts[MODEL_VERTEX_COUNT], const ModelTri *tri, Vec3 normal) {
     s16 cx = 0;
     s16 cy = 0;
     s16 cz = 0;
@@ -345,12 +337,9 @@ static s16 light_for_face_position(const ProjectedVertex verts[8], const Face *f
     const s16 light_y = 260;
     const s16 light_z = -340;
 
-    for (u8 i = 0; i < 4; i++) {
-        const ProjectedVertex *v = &verts[face->v[i]];
-        cx = (s16)(cx + (v->x >> 2));
-        cy = (s16)(cy + (v->y >> 2));
-        cz = (s16)(cz + (v->z >> 2));
-    }
+    cx = (s16)(((s32)verts[tri->a].x + verts[tri->b].x + verts[tri->c].x) / 3);
+    cy = (s16)(((s32)verts[tri->a].y + verts[tri->b].y + verts[tri->c].y) / 3);
+    cz = (s16)(((s32)verts[tri->a].z + verts[tri->b].z + verts[tri->c].z) / 3);
 
     return (s16)((((s32)normal.x * (light_x - cx) +
                    (s32)normal.y * (light_y - cy) +
@@ -393,15 +382,20 @@ static void add_edge_spans(s16 left[FRAME_H], s16 right[FRAME_H],
     }
 }
 
-static void fill_face_spans(const ProjectedVertex verts[8], const Face *face, Vec3 normal) {
+static void fill_tri_spans(const ProjectedVertex verts[MODEL_VERTEX_COUNT], const ModelTri *tri, Vec3 normal) {
     static s16 left[FRAME_H];
     static s16 right[FRAME_H];
     s16 min_y = FRAME_H - 1;
     s16 max_y = 0;
-    s16 base = light_for_face_position(verts, face, normal);
+    const ProjectedVertex *points[3] = {
+        &verts[tri->a],
+        &verts[tri->b],
+        &verts[tri->c],
+    };
+    s16 base = light_for_tri_position(verts, tri, normal);
 
-    for (u8 i = 0; i < 4; i++) {
-        const ProjectedVertex *v = &verts[face->v[i]];
+    for (u8 i = 0; i < 3; i++) {
+        const ProjectedVertex *v = points[i];
         if (v->sy < min_y) min_y = v->sy;
         if (v->sy > max_y) max_y = v->sy;
     }
@@ -414,8 +408,8 @@ static void fill_face_spans(const ProjectedVertex verts[8], const Face *face, Ve
         right[y] = -32768;
     }
 
-    for (u8 i = 0; i < 4; i++) {
-        add_edge_spans(left, right, &verts[face->v[i]], &verts[face->v[(i + 1) & 3]]);
+    for (u8 i = 0; i < 3; i++) {
+        add_edge_spans(left, right, points[i], points[(i + 1) % 3]);
     }
 
     for (s16 y = min_y; y <= max_y; y++) {
@@ -437,13 +431,13 @@ static void fill_face_spans(const ProjectedVertex verts[8], const Face *face, Ve
     }
 }
 
-static void draw_contact_shadow(const ProjectedVertex verts[8]) {
+static void draw_contact_shadow(const ProjectedVertex verts[MODEL_VERTEX_COUNT]) {
     s16 min_x = FRAME_W - 1;
     s16 max_x = 0;
     s16 max_y = 0;
     u16 shadow = fix_word(PAL_SHADOW_DARK, TILE_SHADE_3);
 
-    for (u8 i = 0; i < 8; i++) {
+    for (u8 i = 0; i < MODEL_VERTEX_COUNT; i++) {
         if (verts[i].sx < min_x) min_x = verts[i].sx;
         if (verts[i].sx > max_x) max_x = verts[i].sx;
         if (verts[i].sy > max_y) max_y = verts[i].sy;
@@ -503,50 +497,57 @@ static void line(s16 x0, s16 y0, s16 x1, s16 y1, u16 word) {
     }
 }
 
-static void draw_face_edges(const ProjectedVertex verts[8], const Face *face) {
+static void draw_model_edges(const ProjectedVertex verts[MODEL_VERTEX_COUNT],
+                             const Vec3 edge_normals[MODEL_EDGE_COUNT]) {
     u16 edge = fix_word(PAL_EDGE, TILE_SHADE_8);
 
-    for (u8 i = 0; i < 4; i++) {
-        const ProjectedVertex *a = &verts[face->v[i]];
-        const ProjectedVertex *b = &verts[face->v[(i + 1) & 3]];
+    for (u8 i = 0; i < MODEL_EDGE_COUNT; i++) {
+        const ModelEdge *model_edge = &model_edges[i];
+        const ProjectedVertex *a = &verts[model_edge->a];
+        const ProjectedVertex *b = &verts[model_edge->b];
+
+        if (edge_normals[i].z >= -16) continue;
         line(a->sx, a->sy, b->sx, b->sy, edge);
     }
 }
 
-static void render_cube(u8 pitch, u8 yaw, u8 roll) {
-    ProjectedVertex verts[8];
-    Vec3 normals[6];
-    FaceOrder order[6];
+static void render_model(u8 pitch, u8 yaw, u8 roll) {
+    ProjectedVertex verts[MODEL_VERTEX_COUNT];
+    Vec3 normals[MODEL_TRI_COUNT];
+    Vec3 edge_normals[MODEL_EDGE_COUNT];
+    TriOrder order[MODEL_TRI_COUNT];
 
-    for (u8 i = 0; i < 8; i++) {
-        verts[i] = project_vertex(rotate_vec(cube_vertices[i], pitch, yaw, roll));
+    for (u8 i = 0; i < MODEL_VERTEX_COUNT; i++) {
+        Vec3 p;
+        p.x = model_vertices[i].x;
+        p.y = model_vertices[i].y;
+        p.z = model_vertices[i].z;
+        verts[i] = project_vertex(rotate_vec(p, pitch, yaw, roll));
     }
 
-    for (u8 i = 0; i < 6; i++) {
-        normals[i] = rotate_vec(cube_faces[i].normal, pitch, yaw, roll);
-        order[i].face = i;
-        order[i].z = face_depth(verts, &cube_faces[i]);
+    for (u8 i = 0; i < MODEL_TRI_COUNT; i++) {
+        normals[i] = rotate_vec(model_tris[i].normal, pitch, yaw, roll);
+        order[i].tri = i;
+        order[i].z = tri_depth(verts, &model_tris[i]);
     }
-    sort_faces(order);
+    sort_tris(order);
+
+    for (u8 i = 0; i < MODEL_EDGE_COUNT; i++) {
+        edge_normals[i] = rotate_vec(model_edges[i].normal, pitch, yaw, roll);
+    }
 
     clear_frame();
     draw_contact_shadow(verts);
 
-    for (u8 i = 0; i < 6; i++) {
-        u8 face_id = order[i].face;
+    for (u8 i = 0; i < MODEL_TRI_COUNT; i++) {
+        u8 tri_id = order[i].tri;
 
-        if (normals[face_id].z < 0) {
-            fill_face_spans(verts, &cube_faces[face_id], normals[face_id]);
+        if (normals[tri_id].z < 0) {
+            fill_tri_spans(verts, &model_tris[tri_id], normals[tri_id]);
         }
     }
 
-    for (u8 i = 0; i < 6; i++) {
-        u8 face_id = order[i].face;
-
-        if (normals[face_id].z < -16) {
-            draw_face_edges(verts, &cube_faces[face_id]);
-        }
-    }
+    draw_model_edges(verts, edge_normals);
 
     frame_dirty = 1;
 }
@@ -625,13 +626,13 @@ int main(void) {
     init_palettes();
     clear_fix_map();
     init_sprite_framebuffer();
-    render_cube(pitch, yaw, roll);
+    render_model(pitch, yaw, roll);
     ng_wait_vblank();
     blit_frame();
 
     for (;;) {
         if (update_controls(read_p1_input(), &pitch, &yaw, &roll)) {
-            render_cube(pitch, yaw, roll);
+            render_model(pitch, yaw, roll);
         }
         ng_wait_vblank();
         blit_frame();
