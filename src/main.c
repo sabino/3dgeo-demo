@@ -24,6 +24,7 @@
 #define DEFAULT_LIGHT_X -260
 #define DEFAULT_LIGHT_Y 260
 #define DEFAULT_LIGHT_Z -340
+#define BALL_BG_COLOR 0x0333
 
 #define ADDR_SCB1 0
 #define ADDR_SCB2 0x8000
@@ -131,7 +132,8 @@ static u16 frame_words[FRAME_H][FRAME_W];
 static s16 camera_distance = CAMERA_DISTANCE_DEFAULT;
 static u8 frame_dirty = 1;
 static Vec3 render_light = {DEFAULT_LIGHT_X, DEFAULT_LIGHT_Y, DEFAULT_LIGHT_Z};
-static Vec3 ball_light = {-160, 150, -120};
+static Vec3 ball_light = {240, 210, -220};
+static u8 ball_scene_active = 0;
 
 static const s16 sin_lut[64] = {
        0,   25,   50,   74,   98,  121,  142,  162,
@@ -250,6 +252,17 @@ static void init_one_palette(u8 palette, u16 paper) {
     }
 }
 
+static void init_palette_pair(u8 palette, u16 ink, u16 paper) {
+    volatile u16 *base = &MMAP_PALBANK1[(u16)palette << 4];
+
+    base[0] = 0x8000;
+    base[1] = ink;
+    base[2] = paper;
+    for (u8 i = 3; i < 16; i++) {
+        base[i] = base[1];
+    }
+}
+
 static void init_palettes(void) {
     init_one_palette(PAL_PAPER, 0x0fff);
     init_one_palette(PAL_FACE_0, 0x0222);
@@ -265,7 +278,7 @@ static void init_palettes(void) {
     init_one_palette(PAL_FACE_10, 0x0ccc);
     init_one_palette(PAL_FACE_11, 0x0eee);
     init_one_palette(PAL_EDGE, 0x0111);
-    init_one_palette(PAL_SHADOW_LIGHT, 0x0eee);
+    init_palette_pair(PAL_SHADOW_LIGHT, 0x0fff, BALL_BG_COLOR);
     init_one_palette(PAL_SHADOW_DARK, 0x0ddd);
 }
 
@@ -306,7 +319,9 @@ static ProjectedVertex project_vertex(Vec3 p) {
 }
 
 static void clear_frame(void) {
-    u16 blank = fix_word(PAL_PAPER, TILE_PAPER);
+    u16 blank = ball_scene_active
+        ? fix_word(PAL_SHADOW_LIGHT, TILE_PAPER)
+        : fix_word(PAL_PAPER, TILE_PAPER);
 
     for (u8 y = 0; y < FRAME_H; y++) {
         for (u8 x = 0; x < FRAME_W; x++) {
@@ -514,6 +529,46 @@ static void draw_contact_shadow(const ProjectedVertex *verts, u8 vertex_count) {
     }
 }
 
+static void draw_ball_cast_shadow(const ProjectedVertex *verts, u8 vertex_count) {
+    s16 min_x = FRAME_W - 1;
+    s16 max_x = 0;
+    s16 max_y = 0;
+    ProjectedVertex light = project_vertex(ball_light);
+    u16 shadow = fix_word(PAL_EDGE, TILE_SHADE_9);
+
+    for (u8 i = 0; i < vertex_count; i++) {
+        if (verts[i].sx < min_x) min_x = verts[i].sx;
+        if (verts[i].sx > max_x) max_x = verts[i].sx;
+        if (verts[i].sy > max_y) max_y = verts[i].sy;
+    }
+
+    s16 cx = (s16)((min_x + max_x) >> 1);
+    s16 cy = (s16)(max_y + 4);
+    s16 cast_x = (s16)(cx + ((cx - light.sx) >> 1));
+    s16 cast_y = (s16)(cy + 2 + ((cy - light.sy) >> 3));
+    s16 rx = (s16)(((max_x - min_x) >> 1) + 5);
+    s16 ry = 4;
+
+    if (rx < 10) rx = 10;
+    if (rx > 32) rx = 32;
+    if (cast_y >= FRAME_H) cast_y = FRAME_H - 1;
+
+    for (s16 y = (s16)(cast_y - ry); y <= (s16)(cast_y + ry); y++) {
+        if (y < 0 || y >= FRAME_H) continue;
+
+        s16 dy = (s16)((y > cast_y) ? (y - cast_y) : (cast_y - y));
+        s16 width = (s16)(rx - ((s32)dy * rx) / (ry + 1));
+        s16 x0 = (s16)(cast_x - width);
+        s16 x1 = (s16)(cast_x + width);
+
+        if (x0 < 0) x0 = 0;
+        if (x1 >= FRAME_W) x1 = FRAME_W - 1;
+        for (s16 x = x0; x <= x1; x++) {
+            frame_words[y][x] = shadow;
+        }
+    }
+}
+
 static void put_edge(s16 x, s16 y, u16 word) {
     if (x >= 0 && x < FRAME_W && y >= 0 && y < FRAME_H) {
         frame_words[y][x] = word;
@@ -558,22 +613,26 @@ static void draw_model_edges(const ProjectedVertex *verts, const ModelData *mode
 }
 
 static void use_default_light(void) {
+    ball_scene_active = 0;
     render_light.x = DEFAULT_LIGHT_X;
     render_light.y = DEFAULT_LIGHT_Y;
     render_light.z = DEFAULT_LIGHT_Z;
 }
 
 static void use_ball_light(void) {
+    ball_scene_active = 1;
     render_light = ball_light;
 }
 
 static void draw_light_ball(void) {
     ProjectedVertex light = project_vertex(ball_light);
-    u16 glow = fix_word(PAL_FACE_11, TILE_SHADE_4);
-    u16 core = fix_word(PAL_EDGE, TILE_SHADE_9);
+    u16 halo = fix_word(PAL_SHADOW_LIGHT, TILE_SHADE_3);
+    u16 core = fix_word(PAL_SHADOW_LIGHT, TILE_SHADE_9);
 
-    frame_rect((s16)(light.sx - 2), (s16)(light.sy - 2),
-               (s16)(light.sx + 2), (s16)(light.sy + 2), glow);
+    frame_rect((s16)(light.sx - 2), (s16)(light.sy - 1),
+               (s16)(light.sx + 2), (s16)(light.sy + 1), halo);
+    frame_rect((s16)(light.sx - 1), (s16)(light.sy - 2),
+               (s16)(light.sx + 1), (s16)(light.sy + 2), halo);
     frame_rect((s16)(light.sx - 1), (s16)(light.sy - 1),
                (s16)(light.sx + 1), (s16)(light.sy + 1), core);
 }
@@ -604,7 +663,11 @@ static void render_model(const ModelData *model, u8 pitch, u8 yaw, u8 roll) {
     }
 
     clear_frame();
-    draw_contact_shadow(verts, model->vertex_count);
+    if (ball_scene_active) {
+        draw_ball_cast_shadow(verts, model->vertex_count);
+    } else {
+        draw_contact_shadow(verts, model->vertex_count);
+    }
 
     for (u8 i = 0; i < model->tri_count; i++) {
         u8 tri_id = order[i].tri;
@@ -631,13 +694,16 @@ static void render_ball_model(u8 pitch, u8 yaw, u8 roll) {
     frame_dirty = 1;
 }
 
-static void render_picker_option(u8 selected_option, u8 pitch, u8 yaw, u8 roll) {
+static void render_active_option(u8 selected_option, u8 pitch, u8 yaw, u8 roll) {
     if (selected_option == BALL_OPTION) {
         render_ball_model(pitch, yaw, roll);
     } else {
         render_regular_model(selected_option, pitch, yaw, roll);
     }
+}
 
+static void render_picker_option(u8 selected_option, u8 pitch, u8 yaw, u8 roll) {
+    render_active_option(selected_option, pitch, yaw, roll);
     draw_menu_markers(selected_option);
     frame_dirty = 1;
 }
@@ -757,6 +823,7 @@ int main(void) {
     u8 roll = 0;
     u8 selected_model = 0;
     u8 menu_active = 1;
+    u8 mode_input_lock = 0;
     u8 previous_input = 0;
     u8 preview_tick = 0;
 
@@ -772,6 +839,8 @@ int main(void) {
         u8 changed = 0;
 
         if (menu_active) {
+            u8 entered_mode = 0;
+
             if (pressed(input, previous_input, CNT_LEFT)) {
                 selected_model = (u8)((selected_model + PICKER_OPTION_COUNT - 1) % PICKER_OPTION_COUNT);
                 changed = 1;
@@ -782,28 +851,44 @@ int main(void) {
 
             if (pressed(input, previous_input, CNT_START1 | CNT_A)) {
                 menu_active = 0;
-                changed = 1;
+                mode_input_lock = 1;
+                entered_mode = 1;
+                render_active_option(selected_model, pitch, yaw, roll);
             }
 
-            preview_tick++;
-            if (preview_tick >= 4) {
-                preview_tick = 0;
-                yaw = (u8)((yaw + 1) & ANGLE_MASK);
-                changed = 1;
-            }
+            if (!entered_mode) {
+                preview_tick++;
+                if (preview_tick >= 4) {
+                    preview_tick = 0;
+                    yaw = (u8)((yaw + 1) & ANGLE_MASK);
+                    changed = 1;
+                }
 
-            if (changed) {
-                render_picker_option(selected_model, pitch, yaw, roll);
+                if (changed) {
+                    render_picker_option(selected_model, pitch, yaw, roll);
+                }
             }
         } else {
-            if (pressed(input, previous_input, CNT_START1)) {
+            if (mode_input_lock) {
+                if (input == 0) mode_input_lock = 0;
+            } else if (pressed(input, previous_input, CNT_START1)) {
                 menu_active = 1;
                 changed = 1;
                 render_picker_option(selected_model, pitch, yaw, roll);
-            } else if (selected_model == BALL_OPTION && update_light_controls(input)) {
-                changed = 1;
-                render_ball_model(pitch, yaw, roll);
-            } else if (selected_model != BALL_OPTION && update_controls(input, &pitch, &yaw, &roll)) {
+            } else if (selected_model == BALL_OPTION) {
+                if (update_light_controls(input)) {
+                    changed = 1;
+                }
+                preview_tick++;
+                if (preview_tick >= 4) {
+                    preview_tick = 0;
+                    yaw = (u8)((yaw + 1) & ANGLE_MASK);
+                    changed = 1;
+                }
+                if (changed) {
+                    render_ball_model(pitch, yaw, roll);
+                }
+            } else if (update_controls(input, &pitch, &yaw, &roll)) {
                 changed = 1;
                 render_regular_model(selected_model, pitch, yaw, roll);
             }

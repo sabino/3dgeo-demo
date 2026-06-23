@@ -45,18 +45,18 @@ The hot path avoids sub-cell coverage sampling. Each polygon edge computes one f
 ## OBJ Import Limits
 
 - Bundled models: `assets/models/cube.obj`, `assets/models/pyramid.obj`, and `assets/models/tetrahedron.obj`.
-- The ROM starts in a picker: left/right selects cube, pyramid, tetrahedron, or the BALL light-control demo. START/A enters the selected mode, and START returns to the picker.
-- The BALL option keeps the cube model but switches the D-pad to move the light source and draws the light as a small marker in the microframebuffer.
+- The ROM starts in a picker: left/right selects cube, pyramid, tetrahedron, or the BALL light-control demo. START or Neo Geo A enters the selected mode, and START returns to the picker.
+- The BALL option keeps the cube model spinning, switches the D-pad to move the light source, draws the light as a white marker in the microframebuffer, and uses Neo Geo A/B for light depth.
 - Runtime indices are `u8`, so the converter caps imports at 255 vertices and 255 triangles.
 - Materials, texture coordinates, and OBJ normals are ignored for now.
 - Normals are generated from triangle geometry and stored in Q8 fixed point.
 
 ## Controls
 
-- left/right: yaw
-- up/down: pitch
-- A/B: roll
-- C/D: zoom in/out
+- GnGeo keyboard mapping: arrow keys are the Neo Geo D-pad, `Z`/`X`/`A`/`S` are Neo Geo A/B/C/D, `1` is START, and `3` is COIN.
+- Picker: left/right selects the option, START or Neo Geo A enters it.
+- Cube/pyramid/tetrahedron: D-pad rotates yaw/pitch, Neo Geo A/B rolls, and Neo Geo C/D zooms.
+- BALL: D-pad moves the white light on screen, Neo Geo A/B moves the light in depth, Neo Geo C/D zooms, and START returns to the picker.
 
 ## Build And Run
 
