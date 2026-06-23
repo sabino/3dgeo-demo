@@ -241,12 +241,12 @@ static void draw_controls_overlay(u8 menu_active, u8 selected_option) {
         fix_puts(2, 2, palette, "SELECT MODEL WITH DPAD");
         fix_puts(2, 3, palette, "A ENTER   MODEL: ");
         if (selected_option == BALL_OPTION) {
-            fix_puts(19, 3, palette, "BALL LIGHT");
+            fix_puts(19, 3, palette, "CUBE LIGHT");
         } else {
             fix_put_model_name(19, 3, palette, models[selected_option].name);
         }
     } else if (selected_option == BALL_OPTION) {
-        fix_puts(2, 2, palette, "BALL: DPAD MOVE LIGHT");
+        fix_puts(2, 2, palette, "CUBE LIGHT: DPAD MOVE LIGHT");
         fix_puts(2, 3, palette, "A/B DEPTH   C/D ZOOM");
         fix_puts(2, 29, palette, "COIN BACK TO PICKER");
     } else {
@@ -924,12 +924,15 @@ int main(void) {
 
         if (menu_active) {
             u8 entered_mode = 0;
+            u8 selection_changed = 0;
 
             if (pressed(input, previous_input, CNT_LEFT)) {
                 selected_model = (u8)((selected_model + PICKER_OPTION_COUNT - 1) % PICKER_OPTION_COUNT);
+                selection_changed = 1;
                 changed = 1;
             } else if (pressed(input, previous_input, CNT_RIGHT)) {
                 selected_model = (u8)((selected_model + 1) % PICKER_OPTION_COUNT);
+                selection_changed = 1;
                 changed = 1;
             }
 
@@ -951,6 +954,9 @@ int main(void) {
 
                 if (changed) {
                     render_picker_option(selected_model, pitch, yaw, roll);
+                    if (selection_changed) {
+                        draw_controls_overlay(menu_active, selected_model);
+                    }
                 }
             }
         } else {
