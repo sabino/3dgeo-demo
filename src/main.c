@@ -218,16 +218,16 @@ static void draw_controls_overlay(u8 menu_active, u8 selected_option) {
     clear_fix_map();
 
     if (menu_active) {
-        fix_puts(2, 2, palette, "PICKER: LEFT RIGHT SELECT");
-        fix_puts(2, 3, palette, "Z ENTER   3 BACK");
+        fix_puts(2, 2, palette, "SELECT MODEL WITH DPAD");
+        fix_puts(2, 3, palette, "A ENTER");
     } else if (selected_option == BALL_OPTION) {
-        fix_puts(2, 2, palette, "BALL: ARROWS MOVE LIGHT");
-        fix_puts(2, 3, palette, "Z/X DEPTH   A/S ZOOM");
-        fix_puts(2, 29, palette, "3 BACK TO PICKER");
+        fix_puts(2, 2, palette, "BALL: DPAD MOVE LIGHT");
+        fix_puts(2, 3, palette, "A/B DEPTH   C/D ZOOM");
+        fix_puts(2, 29, palette, "COIN BACK TO PICKER");
     } else {
-        fix_puts(2, 2, palette, "ARROWS ROTATE   Z/X ROLL");
-        fix_puts(2, 3, palette, "A/S ZOOM");
-        fix_puts(2, 29, palette, "3 BACK TO PICKER");
+        fix_puts(2, 2, palette, "DPAD ROTATE   A/B ROLL");
+        fix_puts(2, 3, palette, "C/D ZOOM");
+        fix_puts(2, 29, palette, "COIN BACK TO PICKER");
     }
 }
 
