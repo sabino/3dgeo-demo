@@ -6,16 +6,18 @@ The renderer is based on the Doom64KB Neo Geo approach: an 80x56 logical framebu
 
 The model is computed live on the 68000. The runtime rotates vertices and normals, projects the model, fills visible triangles with a lightweight edge-walked span rasterizer, applies a cheap virtual point-light cue, draws a contact shadow, and adds thin triangle edges for readability. There are no baked animation frames.
 
-OBJ files are converted at build time into compact C arrays. The Neo Geo runtime does not parse OBJ text. The ROM includes all bundled sample models and starts in a small model picker.
+OBJ files are converted at build time into compact C arrays. The Neo Geo runtime does not parse OBJ text. The ROM includes all bundled sample models, plus a `BALL` light-control demo, and starts in a small model picker.
 
 Controls:
 
-- picker left/right: choose model
+- picker left/right: choose cube, pyramid, tetrahedron, or BALL
 - picker START/A: enter rotation mode
 - left/right: yaw
 - up/down: pitch
 - A/B: roll
 - C/D: zoom in/out
+- BALL left/right/up/down: move the light ball
+- BALL A/B: move the light nearer/farther
 - START: return to picker
 
 ## Build
@@ -24,7 +26,7 @@ Controls:
 make
 ```
 
-The bundled ROM currently includes `assets/models/cube.obj`, `assets/models/pyramid.obj`, and `assets/models/tetrahedron.obj`.
+The bundled ROM currently includes `assets/models/cube.obj`, `assets/models/pyramid.obj`, and `assets/models/tetrahedron.obj`. The extra BALL picker slot reuses the cube model with a movable light source.
 
 ## Run
 

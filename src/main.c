@@ -17,6 +17,13 @@
 #define CAMERA_DISTANCE_STEP 18
 #define ANGLE_MASK 63
 #define FACE_LEVELS 12
+#define BALL_OPTION MODEL_COUNT
+#define PICKER_OPTION_COUNT (MODEL_COUNT + 1)
+#define LIGHT_MOVE_STEP 18
+#define LIGHT_Z_STEP 24
+#define DEFAULT_LIGHT_X -260
+#define DEFAULT_LIGHT_Y 260
+#define DEFAULT_LIGHT_Z -340
 
 #define ADDR_SCB1 0
 #define ADDR_SCB2 0x8000
@@ -123,6 +130,8 @@ typedef struct {
 static u16 frame_words[FRAME_H][FRAME_W];
 static s16 camera_distance = CAMERA_DISTANCE_DEFAULT;
 static u8 frame_dirty = 1;
+static Vec3 render_light = {DEFAULT_LIGHT_X, DEFAULT_LIGHT_Y, DEFAULT_LIGHT_Z};
+static Vec3 ball_light = {-160, 150, -120};
 
 static const s16 sin_lut[64] = {
        0,   25,   50,   74,   98,  121,  142,  162,
@@ -340,9 +349,9 @@ static void draw_menu_markers(u8 selected_model) {
     const s16 cell_w = 7;
     const s16 marker_w = 5;
     const s16 y = FRAME_H - 5;
-    s16 start_x = (s16)((FRAME_W - ((s16)MODEL_COUNT * cell_w - 2)) >> 1);
+    s16 start_x = (s16)((FRAME_W - ((s16)PICKER_OPTION_COUNT * cell_w - 2)) >> 1);
 
-    for (u8 i = 0; i < MODEL_COUNT; i++) {
+    for (u8 i = 0; i < PICKER_OPTION_COUNT; i++) {
         s16 x = (s16)(start_x + i * cell_w);
         u16 word = (i == selected_model)
             ? fix_word(PAL_EDGE, TILE_SHADE_9)
@@ -373,17 +382,14 @@ static s16 light_for_tri_position(const ProjectedVertex *verts, const ModelTri *
     s16 cx = 0;
     s16 cy = 0;
     s16 cz = 0;
-    const s16 light_x = -260;
-    const s16 light_y = 260;
-    const s16 light_z = -340;
 
     cx = (s16)(((s32)verts[tri->a].x + verts[tri->b].x + verts[tri->c].x) / 3);
     cy = (s16)(((s32)verts[tri->a].y + verts[tri->b].y + verts[tri->c].y) / 3);
     cz = (s16)(((s32)verts[tri->a].z + verts[tri->b].z + verts[tri->c].z) / 3);
 
-    return (s16)((((s32)normal.x * (light_x - cx) +
-                   (s32)normal.y * (light_y - cy) +
-                   (s32)normal.z * (light_z - cz)) >> 9) + 24);
+    return (s16)((((s32)normal.x * (render_light.x - cx) +
+                   (s32)normal.y * (render_light.y - cy) +
+                   (s32)normal.z * (render_light.z - cz)) >> 9) + 24);
 }
 
 static void add_edge_spans(s16 left[FRAME_H], s16 right[FRAME_H],
@@ -551,6 +557,27 @@ static void draw_model_edges(const ProjectedVertex *verts, const ModelData *mode
     }
 }
 
+static void use_default_light(void) {
+    render_light.x = DEFAULT_LIGHT_X;
+    render_light.y = DEFAULT_LIGHT_Y;
+    render_light.z = DEFAULT_LIGHT_Z;
+}
+
+static void use_ball_light(void) {
+    render_light = ball_light;
+}
+
+static void draw_light_ball(void) {
+    ProjectedVertex light = project_vertex(ball_light);
+    u16 glow = fix_word(PAL_FACE_11, TILE_SHADE_4);
+    u16 core = fix_word(PAL_EDGE, TILE_SHADE_9);
+
+    frame_rect((s16)(light.sx - 2), (s16)(light.sy - 2),
+               (s16)(light.sx + 2), (s16)(light.sy + 2), glow);
+    frame_rect((s16)(light.sx - 1), (s16)(light.sy - 1),
+               (s16)(light.sx + 1), (s16)(light.sy + 1), core);
+}
+
 static void render_model(const ModelData *model, u8 pitch, u8 yaw, u8 roll) {
     ProjectedVertex verts[MODEL_MAX_VERTEX_COUNT];
     Vec3 normals[MODEL_MAX_TRI_COUNT];
@@ -592,9 +619,26 @@ static void render_model(const ModelData *model, u8 pitch, u8 yaw, u8 roll) {
     frame_dirty = 1;
 }
 
-static void render_model_picker(u8 selected_model, u8 pitch, u8 yaw, u8 roll) {
+static void render_regular_model(u8 selected_model, u8 pitch, u8 yaw, u8 roll) {
+    use_default_light();
     render_model(&models[selected_model], pitch, yaw, roll);
-    draw_menu_markers(selected_model);
+}
+
+static void render_ball_model(u8 pitch, u8 yaw, u8 roll) {
+    use_ball_light();
+    render_model(&models[0], pitch, yaw, roll);
+    draw_light_ball();
+    frame_dirty = 1;
+}
+
+static void render_picker_option(u8 selected_option, u8 pitch, u8 yaw, u8 roll) {
+    if (selected_option == BALL_OPTION) {
+        render_ball_model(pitch, yaw, roll);
+    } else {
+        render_regular_model(selected_option, pitch, yaw, roll);
+    }
+
+    draw_menu_markers(selected_option);
     frame_dirty = 1;
 }
 
@@ -668,6 +712,45 @@ static u8 update_controls(u8 input, u8 *pitch, u8 *yaw, u8 *roll) {
     return changed;
 }
 
+static u8 update_light_controls(u8 input) {
+    u8 changed = 0;
+
+    if (input & CNT_LEFT) {
+        if (ball_light.x > -320) ball_light.x = (s16)(ball_light.x - LIGHT_MOVE_STEP);
+        changed = 1;
+    } else if (input & CNT_RIGHT) {
+        if (ball_light.x < 320) ball_light.x = (s16)(ball_light.x + LIGHT_MOVE_STEP);
+        changed = 1;
+    }
+    if (input & CNT_UP) {
+        if (ball_light.y < 260) ball_light.y = (s16)(ball_light.y + LIGHT_MOVE_STEP);
+        changed = 1;
+    } else if (input & CNT_DOWN) {
+        if (ball_light.y > -260) ball_light.y = (s16)(ball_light.y - LIGHT_MOVE_STEP);
+        changed = 1;
+    }
+    if (input & CNT_A) {
+        if (ball_light.z > -520) ball_light.z = (s16)(ball_light.z - LIGHT_Z_STEP);
+        changed = 1;
+    } else if (input & CNT_B) {
+        if (ball_light.z < 240) ball_light.z = (s16)(ball_light.z + LIGHT_Z_STEP);
+        changed = 1;
+    }
+    if (input & CNT_C) {
+        if (camera_distance > CAMERA_DISTANCE_MIN) {
+            camera_distance = (s16)(camera_distance - CAMERA_DISTANCE_STEP);
+            changed = 1;
+        }
+    } else if (input & CNT_D) {
+        if (camera_distance < CAMERA_DISTANCE_MAX) {
+            camera_distance = (s16)(camera_distance + CAMERA_DISTANCE_STEP);
+            changed = 1;
+        }
+    }
+
+    return changed;
+}
+
 int main(void) {
     u8 pitch = 54;
     u8 yaw = 56;
@@ -680,7 +763,7 @@ int main(void) {
     init_palettes();
     clear_fix_map();
     init_sprite_framebuffer();
-    render_model_picker(selected_model, pitch, yaw, roll);
+    render_picker_option(selected_model, pitch, yaw, roll);
     ng_wait_vblank();
     blit_frame();
 
@@ -690,10 +773,10 @@ int main(void) {
 
         if (menu_active) {
             if (pressed(input, previous_input, CNT_LEFT)) {
-                selected_model = (u8)((selected_model + MODEL_COUNT - 1) % MODEL_COUNT);
+                selected_model = (u8)((selected_model + PICKER_OPTION_COUNT - 1) % PICKER_OPTION_COUNT);
                 changed = 1;
             } else if (pressed(input, previous_input, CNT_RIGHT)) {
-                selected_model = (u8)((selected_model + 1) % MODEL_COUNT);
+                selected_model = (u8)((selected_model + 1) % PICKER_OPTION_COUNT);
                 changed = 1;
             }
 
@@ -710,16 +793,19 @@ int main(void) {
             }
 
             if (changed) {
-                render_model_picker(selected_model, pitch, yaw, roll);
+                render_picker_option(selected_model, pitch, yaw, roll);
             }
         } else {
             if (pressed(input, previous_input, CNT_START1)) {
                 menu_active = 1;
                 changed = 1;
-                render_model_picker(selected_model, pitch, yaw, roll);
-            } else if (update_controls(input, &pitch, &yaw, &roll)) {
+                render_picker_option(selected_model, pitch, yaw, roll);
+            } else if (selected_model == BALL_OPTION && update_light_controls(input)) {
                 changed = 1;
-                render_model(&models[selected_model], pitch, yaw, roll);
+                render_ball_model(pitch, yaw, roll);
+            } else if (selected_model != BALL_OPTION && update_controls(input, &pitch, &yaw, &roll)) {
+                changed = 1;
+                render_regular_model(selected_model, pitch, yaw, roll);
             }
         }
 
