@@ -128,6 +128,18 @@ typedef struct {
 
 #include "model_data.h"
 
+static u8 streq(const char *a, const char *b) {
+    while (*a && *b && *a == *b) {
+        a++;
+        b++;
+    }
+    return (u8)(*a == *b);
+}
+
+static u8 should_draw_model_edges(const ModelData *model) {
+    return (u8)(!streq(model->name, "ball") && !streq(model->name, "donut"));
+}
+
 static u16 frame_words[FRAME_H][FRAME_W];
 static s16 camera_distance = CAMERA_DISTANCE_DEFAULT;
 static u8 frame_dirty = 1;
@@ -720,6 +732,7 @@ static void render_model(const ModelData *model, u8 pitch, u8 yaw, u8 roll) {
     Vec3 normals[MODEL_MAX_TRI_COUNT];
     Vec3 edge_normals[MODEL_MAX_EDGE_COUNT];
     TriOrder order[MODEL_MAX_TRI_COUNT];
+    u8 draw_edges = should_draw_model_edges(model);
 
     for (u8 i = 0; i < model->vertex_count; i++) {
         Vec3 p;
@@ -736,8 +749,10 @@ static void render_model(const ModelData *model, u8 pitch, u8 yaw, u8 roll) {
     }
     sort_tris(order, model->tri_count);
 
-    for (u8 i = 0; i < model->edge_count; i++) {
-        edge_normals[i] = rotate_vec(model->edges[i].normal, pitch, yaw, roll);
+    if (draw_edges) {
+        for (u8 i = 0; i < model->edge_count; i++) {
+            edge_normals[i] = rotate_vec(model->edges[i].normal, pitch, yaw, roll);
+        }
     }
 
     clear_frame();
@@ -755,7 +770,9 @@ static void render_model(const ModelData *model, u8 pitch, u8 yaw, u8 roll) {
         }
     }
 
-    draw_model_edges(verts, model, edge_normals);
+    if (draw_edges) {
+        draw_model_edges(verts, model, edge_normals);
+    }
 
     frame_dirty = 1;
 }

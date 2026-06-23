@@ -28,8 +28,8 @@ def write_obj(path: Path, comment: str, vertices: list[tuple[float, float, float
 
 
 def make_uv_ball(path: Path) -> None:
-    rings = 5
-    segments = 10
+    rings = 4
+    segments = 8
     vertices: list[tuple[float, float, float]] = [(0.0, 1.0, 0.0)]
     faces: list[tuple[int, ...]] = []
 
@@ -65,8 +65,8 @@ def make_uv_ball(path: Path) -> None:
 
 
 def make_torus(path: Path) -> None:
-    major_steps = 10
-    minor_steps = 6
+    major_steps = 8
+    minor_steps = 4
     major_radius = 1.0
     minor_radius = 0.34
     vertices: list[tuple[float, float, float]] = []
