@@ -18,7 +18,7 @@ Four renderer modes are available:
 - `RENDERER=fix`: 40x28 FIX-cell framebuffer, default.
 - `RENDERER=sprite`: 20x14 native 16x16 sprite-cell framebuffer using C-ROM shade tiles at tile 256 and a sticky sprite chain.
 - `RENDERER=sprite40`: 40x28 sprite-cell framebuffer using half-size sprite shrink, richer shade levels, sub-cell coverage masks, and a subtle contact shadow.
-- `RENDERER=microfb`: 80x56 sprite microframebuffer inspired by Doom64KB's Neo Geo backend. Each logical cell is a 16x16 C-ROM tile shrunk to 4x4 pixels; each column is split into two 28-cell sprite strips so the full framebuffer stays under the per-scanline sprite budget and the 32-tile-per-sprite height limit.
+- `RENDERER=microfb`: 80x56 sprite microframebuffer inspired by Doom64KB's Neo Geo backend. Each logical cell is a 16x16 C-ROM tile shrunk to 4x4 pixels; each column is split into two 28-cell sprite strips so the full framebuffer stays under the per-scanline sprite budget and the 32-tile-per-sprite height limit. This mode uses a lightweight span rasterizer with a virtual point-light cue, contact shadow, and thin face edges instead of the heavier sub-cell coverage path used by `sprite40`.
 
 Controls:
 

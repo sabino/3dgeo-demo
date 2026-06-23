@@ -74,6 +74,10 @@
 #define RENDERER_MASKED_CUBE 1
 #endif
 
+#ifdef RENDERER_SPRITE40
+#define RENDERER_DETAIL_MASKED_CUBE 1
+#endif
+
 enum {
     TILE_CLEAR = 0,
     TILE_SHADE_1,
@@ -156,7 +160,7 @@ typedef struct {
     s16 z;
 } FaceOrder;
 
-#ifdef RENDERER_MASKED_CUBE
+#ifdef RENDERER_DETAIL_MASKED_CUBE
 typedef struct {
     s16 base;
     s16 origin_x;
@@ -437,17 +441,25 @@ static void clear_frame(void) {
     }
 }
 
-static s16 light_for_normal(Vec3 normal) {
 #ifdef RENDERER_MASKED_CUBE
+#ifndef RENDERER_MICROFB
+static s16 light_for_normal(Vec3 normal) {
     Vec3 light = {-150, 70, -150};
-#else
-    Vec3 light = {-104, -150, -186};
-#endif
 
     return (s16)(((s32)normal.x * light.x +
                   (s32)normal.y * light.y +
                   (s32)normal.z * light.z) >> Q);
 }
+#endif
+#else
+static s16 light_for_normal(Vec3 normal) {
+    Vec3 light = {-104, -150, -186};
+
+    return (s16)(((s32)normal.x * light.x +
+                  (s32)normal.y * light.y +
+                  (s32)normal.z * light.z) >> Q);
+}
+#endif
 
 #ifdef RENDERER_MASKED_CUBE
 static u8 face_level_for_intensity(s16 intensity) {
@@ -511,7 +523,7 @@ static void sort_faces(FaceOrder order[6]) {
     }
 }
 
-#ifdef RENDERER_MASKED_CUBE
+#ifdef RENDERER_DETAIL_MASKED_CUBE
 static s32 edge_cross_q4(const ProjectedVertex *a, const ProjectedVertex *b, s16 px4, s16 py4) {
     s16 ax4 = (s16)(a->sx << 2);
     s16 ay4 = (s16)(a->sy << 2);
@@ -781,7 +793,7 @@ static void fill_face(const ProjectedVertex verts[8], const Face *face, u16 word
 }
 #endif
 
-#ifdef RENDERER_MASKED_CUBE
+#ifdef RENDERER_DETAIL_MASKED_CUBE
 static void fill_face_lit(const ProjectedVertex verts[8], const Face *face, u8 face_id,
                           const Vec3 normals[6]) {
     s16 min_x = FRAME_W - 1;
@@ -838,6 +850,194 @@ static void fill_face_lit(const ProjectedVertex verts[8], const Face *face, u8 f
                 edge_value[edge] += coverage.edge[edge].a << 2;
             }
         }
+    }
+}
+#endif
+
+#ifdef RENDERER_MICROFB
+static s16 light_for_face_position(const ProjectedVertex verts[8], const Face *face, Vec3 normal) {
+    s16 cx = 0;
+    s16 cy = 0;
+    s16 cz = 0;
+    const s16 light_x = -260;
+    const s16 light_y = 260;
+    const s16 light_z = -340;
+
+    for (u8 i = 0; i < 4; i++) {
+        const ProjectedVertex *v = &verts[face->v[i]];
+        cx = (s16)(cx + (v->x >> 2));
+        cy = (s16)(cy + (v->y >> 2));
+        cz = (s16)(cz + (v->z >> 2));
+    }
+
+    return (s16)((((s32)normal.x * (light_x - cx) +
+                   (s32)normal.y * (light_y - cy) +
+                   (s32)normal.z * (light_z - cz)) >> 9) + 24);
+}
+
+static void add_edge_spans(s16 left[FRAME_H], s16 right[FRAME_H],
+                           const ProjectedVertex *a, const ProjectedVertex *b) {
+    s16 x0 = a->sx;
+    s16 y0 = a->sy;
+    s16 x1 = b->sx;
+    s16 y1 = b->sy;
+    s16 dy;
+    s32 x;
+    s32 step;
+    s16 start_y;
+    s16 end_y;
+
+    if (y0 == y1) return;
+    if (y0 > y1) {
+        s16 tx = x0;
+        s16 ty = y0;
+        x0 = x1;
+        y0 = y1;
+        x1 = tx;
+        y1 = ty;
+    }
+
+    dy = (s16)(y1 - y0);
+    step = ((s32)(x1 - x0) << Q) / dy;
+    start_y = y0;
+    end_y = y1;
+
+    if (start_y < 0) start_y = 0;
+    if (end_y > FRAME_H) end_y = FRAME_H;
+    if (start_y >= end_y) return;
+
+    x = ((s32)x0 << Q) + step * (start_y - y0);
+    for (s16 y = start_y; y < end_y; y++) {
+        s16 xi = (s16)(x >> Q);
+
+        if (xi < left[y]) left[y] = xi;
+        if (xi > right[y]) right[y] = xi;
+        x += step;
+    }
+}
+
+static void fill_face_fast_spans(const ProjectedVertex verts[8], const Face *face, Vec3 normal) {
+    static s16 left[FRAME_H];
+    static s16 right[FRAME_H];
+    s16 min_y = FRAME_H - 1;
+    s16 max_y = 0;
+    s16 base = light_for_face_position(verts, face, normal);
+
+    for (u8 i = 0; i < 4; i++) {
+        const ProjectedVertex *v = &verts[face->v[i]];
+        if (v->sy < min_y) min_y = v->sy;
+        if (v->sy > max_y) max_y = v->sy;
+    }
+
+    if (min_y < 0) min_y = 0;
+    if (max_y >= FRAME_H) max_y = FRAME_H - 1;
+
+    for (s16 y = min_y; y <= max_y; y++) {
+        left[y] = 32767;
+        right[y] = -32768;
+    }
+
+    for (u8 i = 0; i < 4; i++) {
+        add_edge_spans(left, right, &verts[face->v[i]], &verts[face->v[(i + 1) & 3]]);
+    }
+
+    for (s16 y = min_y; y <= max_y; y++) {
+        s16 x0 = left[y];
+        s16 x1 = right[y];
+
+        if (x0 <= x1) {
+            s16 mid;
+            s16 row_bias;
+            u16 word;
+
+            if (x0 < 0) x0 = 0;
+            if (x1 >= FRAME_W) x1 = FRAME_W - 1;
+            if (x0 > x1) continue;
+
+            mid = (s16)((x0 + x1) >> 1);
+            row_bias = (s16)((FRAME_H / 2 - y) - ((mid - FRAME_W / 2) >> 1));
+            word = face_word_for_intensity_mask((s16)(base + row_bias), 0x0f);
+
+            for (s16 x = x0; x <= x1; x++) {
+                frame_words[y][x] = word;
+            }
+        }
+    }
+}
+
+static void draw_contact_shadow_fast(const ProjectedVertex verts[8]) {
+    s16 min_x = FRAME_W - 1;
+    s16 max_x = 0;
+    s16 max_y = 0;
+    u16 shadow = fix_word(PAL_SHADOW_DARK, TILE_SHADE_3);
+
+    for (u8 i = 0; i < 8; i++) {
+        if (verts[i].sx < min_x) min_x = verts[i].sx;
+        if (verts[i].sx > max_x) max_x = verts[i].sx;
+        if (verts[i].sy > max_y) max_y = verts[i].sy;
+    }
+
+    s16 cx = (s16)((min_x + max_x) >> 1);
+    s16 rx = (s16)(((max_x - min_x) >> 1) + 3);
+    s16 cy = (s16)(max_y + 3);
+    s16 ry = 3;
+
+    if (rx < 8) rx = 8;
+    if (rx > 26) rx = 26;
+    if (cy >= FRAME_H) cy = FRAME_H - 1;
+
+    for (s16 y = (s16)(cy - ry); y <= (s16)(cy + ry); y++) {
+        if (y < 0 || y >= FRAME_H) continue;
+
+        s16 dy = (s16)((y > cy) ? (y - cy) : (cy - y));
+        s16 width = (s16)(rx - ((s32)dy * rx) / (ry + 1));
+        s16 x0 = (s16)(cx - width);
+        s16 x1 = (s16)(cx + width);
+
+        if (x0 < 0) x0 = 0;
+        if (x1 >= FRAME_W) x1 = FRAME_W - 1;
+        for (s16 x = x0; x <= x1; x++) {
+            frame_words[y][x] = shadow;
+        }
+    }
+}
+
+static void microfb_put_edge(s16 x, s16 y, u16 word) {
+    if (x >= 0 && x < FRAME_W && y >= 0 && y < FRAME_H) {
+        frame_words[y][x] = word;
+    }
+}
+
+static void microfb_line(s16 x0, s16 y0, s16 x1, s16 y1, u16 word) {
+    s16 dx = (x0 < x1) ? (x1 - x0) : (x0 - x1);
+    s16 sx = (x0 < x1) ? 1 : -1;
+    s16 dy = (y0 < y1) ? (y0 - y1) : (y1 - y0);
+    s16 sy = (y0 < y1) ? 1 : -1;
+    s16 err = (s16)(dx + dy);
+
+    for (;;) {
+        microfb_put_edge(x0, y0, word);
+        if (x0 == x1 && y0 == y1) break;
+
+        s16 e2 = (s16)(err << 1);
+        if (e2 >= dy) {
+            err = (s16)(err + dy);
+            x0 = (s16)(x0 + sx);
+        }
+        if (e2 <= dx) {
+            err = (s16)(err + dx);
+            y0 = (s16)(y0 + sy);
+        }
+    }
+}
+
+static void draw_face_edges_fast(const ProjectedVertex verts[8], const Face *face) {
+    u16 edge = fix_word(PAL_EDGE, TILE_SHADE_8);
+
+    for (u8 i = 0; i < 4; i++) {
+        const ProjectedVertex *a = &verts[face->v[i]];
+        const ProjectedVertex *b = &verts[face->v[(i + 1) & 3]];
+        microfb_line(a->sx, a->sy, b->sx, b->sy, edge);
     }
 }
 #endif
@@ -916,12 +1116,19 @@ static void render_cube(u8 pitch, u8 yaw, u8 roll) {
     sort_faces(order);
 
     clear_frame();
-#ifdef RENDERER_MASKED_CUBE
+#ifdef RENDERER_MICROFB
+    draw_contact_shadow_fast(verts);
+#elif defined(RENDERER_MASKED_CUBE)
     draw_contact_shadow(verts);
 #endif
     for (u8 i = 0; i < 6; i++) {
         const Face *face = &cube_faces[order[i].face];
-#ifdef RENDERER_MASKED_CUBE
+#ifdef RENDERER_MICROFB
+        u8 face_id = order[i].face;
+        if (normals[face_id].z < 0) {
+            fill_face_fast_spans(verts, face, normals[face_id]);
+        }
+#elif defined(RENDERER_MASKED_CUBE)
         u8 face_id = order[i].face;
         if (normals[face_id].z < 0) {
             fill_face_lit(verts, face, face_id, normals);
@@ -930,6 +1137,14 @@ static void render_cube(u8 pitch, u8 yaw, u8 roll) {
         fill_face(verts, face, face_word_for_normal(normals[order[i].face]));
 #endif
     }
+#ifdef RENDERER_MICROFB
+    for (u8 i = 0; i < 6; i++) {
+        u8 face_id = order[i].face;
+        if (normals[face_id].z < -16) {
+            draw_face_edges_fast(verts, &cube_faces[face_id]);
+        }
+    }
+#endif
 #ifndef RENDERER_MASKED_CUBE
     for (u8 i = 0; i < 6; i++) {
         u8 face_id = order[i].face;
