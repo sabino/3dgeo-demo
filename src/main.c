@@ -432,6 +432,7 @@ static void frame_rect(s16 x0, s16 y0, s16 x1, s16 y1, u16 word) {
 static void draw_menu_markers(u8 selected_model) {
     const s16 cell_w = 7;
     const s16 marker_w = 5;
+    const s16 marker_h = 3;
     const s16 y = FRAME_H - 5;
     s16 start_x = (s16)((FRAME_W - ((s16)PICKER_OPTION_COUNT * cell_w - 2)) >> 1);
 
@@ -439,9 +440,9 @@ static void draw_menu_markers(u8 selected_model) {
         s16 x = (s16)(start_x + i * cell_w);
         u16 word = (i == selected_model)
             ? fix_word(PAL_EDGE, TILE_SHADE_9)
-            : fix_word(PAL_FACE_8, TILE_SHADE_3);
+            : fix_word(PAL_FACE_5, TILE_SHADE_9);
 
-        frame_rect(x, y, (s16)(x + marker_w - 1), (s16)(y + 1), word);
+        frame_rect(x, y, (s16)(x + marker_w - 1), (s16)(y + marker_h - 1), word);
     }
 }
 
