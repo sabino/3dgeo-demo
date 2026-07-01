@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """Generate small readable OBJ primitives for the Neo Geo renderer."""
 
 from __future__ import annotations

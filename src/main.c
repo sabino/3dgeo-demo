@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+
 #include <ngdevkit/neogeo.h>
 #include <ngdevkit/ng-video.h>
 
@@ -17,14 +19,14 @@
 #define CAMERA_DISTANCE_STEP 18
 #define ANGLE_MASK 63
 #define FACE_LEVELS 12
-#define BALL_OPTION MODEL_COUNT
+#define CUBE_LIGHT_OPTION MODEL_COUNT
 #define PICKER_OPTION_COUNT (MODEL_COUNT + 1)
 #define LIGHT_MOVE_STEP 18
 #define LIGHT_Z_STEP 24
 #define DEFAULT_LIGHT_X -260
 #define DEFAULT_LIGHT_Y 260
 #define DEFAULT_LIGHT_Z -340
-#define BALL_BG_COLOR 0x0333
+#define LIGHT_BG_COLOR 0x0333
 
 #define ADDR_SCB1 0
 #define ADDR_SCB2 0x8000
@@ -144,8 +146,8 @@ static u16 frame_words[FRAME_H][FRAME_W];
 static s16 camera_distance = CAMERA_DISTANCE_DEFAULT;
 static u8 frame_dirty = 1;
 static Vec3 render_light = {DEFAULT_LIGHT_X, DEFAULT_LIGHT_Y, DEFAULT_LIGHT_Z};
-static Vec3 ball_light = {240, 210, -220};
-static u8 ball_scene_active = 0;
+static Vec3 scene_light = {240, 210, -220};
+static u8 light_scene_active = 0;
 
 static const s16 sin_lut[64] = {
        0,   25,   50,   74,   98,  121,  142,  162,
@@ -243,7 +245,7 @@ static void fix_put_model_name(u8 col, u8 row, u8 palette, const char *name) {
 }
 
 static void draw_controls_overlay(u8 menu_active, u8 selected_option) {
-    u8 palette = (u8)((!menu_active && selected_option == BALL_OPTION)
+    u8 palette = (u8)((!menu_active && selected_option == CUBE_LIGHT_OPTION)
         ? PAL_SHADOW_LIGHT
         : PAL_EDGE);
 
@@ -252,12 +254,12 @@ static void draw_controls_overlay(u8 menu_active, u8 selected_option) {
     if (menu_active) {
         fix_puts(2, 2, palette, "SELECT MODEL WITH DPAD");
         fix_puts(2, 3, palette, "A ENTER   MODEL: ");
-        if (selected_option == BALL_OPTION) {
+        if (selected_option == CUBE_LIGHT_OPTION) {
             fix_puts(19, 3, palette, "CUBE LIGHT");
         } else {
             fix_put_model_name(19, 3, palette, models[selected_option].name);
         }
-    } else if (selected_option == BALL_OPTION) {
+    } else if (selected_option == CUBE_LIGHT_OPTION) {
         fix_puts(2, 2, palette, "CUBE LIGHT: DPAD MOVE LIGHT");
         fix_puts(2, 3, palette, "A/B DEPTH   C/D ZOOM");
         fix_puts(2, 29, palette, "COIN BACK TO PICKER");
@@ -347,7 +349,7 @@ static void init_palettes(void) {
     init_one_palette(PAL_FACE_10, 0x0ccc);
     init_one_palette(PAL_FACE_11, 0x0eee);
     init_one_palette(PAL_EDGE, 0x0111);
-    init_palette_pair(PAL_SHADOW_LIGHT, 0x0fff, BALL_BG_COLOR);
+    init_palette_pair(PAL_SHADOW_LIGHT, 0x0fff, LIGHT_BG_COLOR);
     init_one_palette(PAL_SHADOW_DARK, 0x0ddd);
 }
 
@@ -388,7 +390,7 @@ static ProjectedVertex project_vertex(Vec3 p) {
 }
 
 static void clear_frame(void) {
-    u16 blank = ball_scene_active
+    u16 blank = light_scene_active
         ? fix_word(PAL_SHADOW_LIGHT, TILE_PAPER)
         : fix_word(PAL_PAPER, TILE_PAPER);
 
@@ -599,11 +601,11 @@ static void draw_contact_shadow(const ProjectedVertex *verts, u8 vertex_count) {
     }
 }
 
-static void draw_ball_cast_shadow(const ProjectedVertex *verts, u8 vertex_count) {
+static void draw_light_cast_shadow(const ProjectedVertex *verts, u8 vertex_count) {
     s16 min_x = FRAME_W - 1;
     s16 max_x = 0;
     s16 max_y = 0;
-    ProjectedVertex light = project_vertex(ball_light);
+    ProjectedVertex light = project_vertex(scene_light);
     u16 shadow = fix_word(PAL_EDGE, TILE_SHADE_9);
 
     for (u8 i = 0; i < vertex_count; i++) {
@@ -683,22 +685,22 @@ static void draw_model_edges(const ProjectedVertex *verts, const ModelData *mode
 }
 
 static void use_default_light(void) {
-    ball_scene_active = 0;
+    light_scene_active = 0;
     render_light.x = DEFAULT_LIGHT_X;
     render_light.y = DEFAULT_LIGHT_Y;
     render_light.z = DEFAULT_LIGHT_Z;
 }
 
-static void use_ball_light(void) {
-    ball_scene_active = 1;
-    render_light = ball_light;
+static void use_scene_light(void) {
+    light_scene_active = 1;
+    render_light = scene_light;
 }
 
-static void draw_light_ball(void) {
-    ProjectedVertex light = project_vertex(ball_light);
+static void draw_light_marker(void) {
+    ProjectedVertex light = project_vertex(scene_light);
     u16 halo = fix_word(PAL_SHADOW_LIGHT, TILE_SHADE_3);
     u16 core = fix_word(PAL_SHADOW_LIGHT, TILE_SHADE_9);
-    s16 denom = (s16)(ball_light.z + camera_distance);
+    s16 denom = (s16)(scene_light.z + camera_distance);
     if (denom < 160) denom = 160;
 
     s16 radius = (s16)(1 + ((s32)1200 / denom));
@@ -757,8 +759,8 @@ static void render_model(const ModelData *model, u8 pitch, u8 yaw, u8 roll) {
     }
 
     clear_frame();
-    if (ball_scene_active) {
-        draw_ball_cast_shadow(verts, model->vertex_count);
+    if (light_scene_active) {
+        draw_light_cast_shadow(verts, model->vertex_count);
     } else {
         draw_contact_shadow(verts, model->vertex_count);
     }
@@ -783,16 +785,16 @@ static void render_regular_model(u8 selected_model, u8 pitch, u8 yaw, u8 roll) {
     render_model(&models[selected_model], pitch, yaw, roll);
 }
 
-static void render_ball_model(u8 pitch, u8 yaw, u8 roll) {
-    use_ball_light();
+static void render_light_model(u8 pitch, u8 yaw, u8 roll) {
+    use_scene_light();
     render_model(&models[0], pitch, yaw, roll);
-    draw_light_ball();
+    draw_light_marker();
     frame_dirty = 1;
 }
 
 static void render_active_option(u8 selected_option, u8 pitch, u8 yaw, u8 roll) {
-    if (selected_option == BALL_OPTION) {
-        render_ball_model(pitch, yaw, roll);
+    if (selected_option == CUBE_LIGHT_OPTION) {
+        render_light_model(pitch, yaw, roll);
     } else {
         render_regular_model(selected_option, pitch, yaw, roll);
     }
@@ -882,24 +884,24 @@ static u8 update_light_controls(u8 input) {
     u8 changed = 0;
 
     if (input & CNT_LEFT) {
-        if (ball_light.x > -320) ball_light.x = (s16)(ball_light.x - LIGHT_MOVE_STEP);
+        if (scene_light.x > -320) scene_light.x = (s16)(scene_light.x - LIGHT_MOVE_STEP);
         changed = 1;
     } else if (input & CNT_RIGHT) {
-        if (ball_light.x < 320) ball_light.x = (s16)(ball_light.x + LIGHT_MOVE_STEP);
+        if (scene_light.x < 320) scene_light.x = (s16)(scene_light.x + LIGHT_MOVE_STEP);
         changed = 1;
     }
     if (input & CNT_UP) {
-        if (ball_light.y < 260) ball_light.y = (s16)(ball_light.y + LIGHT_MOVE_STEP);
+        if (scene_light.y < 260) scene_light.y = (s16)(scene_light.y + LIGHT_MOVE_STEP);
         changed = 1;
     } else if (input & CNT_DOWN) {
-        if (ball_light.y > -260) ball_light.y = (s16)(ball_light.y - LIGHT_MOVE_STEP);
+        if (scene_light.y > -260) scene_light.y = (s16)(scene_light.y - LIGHT_MOVE_STEP);
         changed = 1;
     }
     if (input & CNT_A) {
-        if (ball_light.z > -520) ball_light.z = (s16)(ball_light.z - LIGHT_Z_STEP);
+        if (scene_light.z > -520) scene_light.z = (s16)(scene_light.z - LIGHT_Z_STEP);
         changed = 1;
     } else if (input & CNT_B) {
-        if (ball_light.z < 240) ball_light.z = (s16)(ball_light.z + LIGHT_Z_STEP);
+        if (scene_light.z < 240) scene_light.z = (s16)(scene_light.z + LIGHT_Z_STEP);
         changed = 1;
     }
     if (input & CNT_C) {
@@ -985,7 +987,7 @@ int main(void) {
                 changed = 1;
                 render_picker_option(selected_model, pitch, yaw, roll);
                 draw_controls_overlay(menu_active, selected_model);
-            } else if (selected_model == BALL_OPTION) {
+            } else if (selected_model == CUBE_LIGHT_OPTION) {
                 if (update_light_controls(input)) {
                     changed = 1;
                 }
@@ -996,7 +998,7 @@ int main(void) {
                     changed = 1;
                 }
                 if (changed) {
-                    render_ball_model(pitch, yaw, roll);
+                    render_light_model(pitch, yaw, roll);
                 }
             } else if (update_controls(input, &pitch, &yaw, &roll)) {
                 changed = 1;

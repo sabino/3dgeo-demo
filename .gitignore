@@ -3,3 +3,5 @@ build/
 *.elf
 *.ihx
 *.rel
+*.log
+.DS_Store

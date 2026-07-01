@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """Generate clear plus FIX framebuffer shade/line tiles."""
 
 from __future__ import annotations

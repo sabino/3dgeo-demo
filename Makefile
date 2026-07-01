@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 PROJECT := 3dgeo
 GAMEROM := 3dgeo
 GAMETITLE := 3Dgeo sprite microframebuffer
