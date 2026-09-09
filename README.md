@@ -13,6 +13,10 @@ marks the starting point; see [the history guide](docs/HISTORY.md). No GitHub
 remote is configured yet, so this local project is ready for a separate public
 repository when its name and visibility are chosen.
 
+GitHub Actions builds and tests pushes/PRs, provides downloadable ROM artifacts,
+and prepares draft releases for `v*` tags. See the [CI and publishing guide](docs/PUBLISHING.md)
+for local reproduction and the first-publication checklist.
+
 The current ROM renders OBJ-derived primitive models through a sprite-backed
 80x56 logical framebuffer. Each logical cell is represented by one 16x16 C-ROM
 tile shrunk by sprite zoom to a visible 4x4 block. The 68000 rotates vertices

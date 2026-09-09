@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+set -euo pipefail
+
+if [[ -n $(git status --porcelain --untracked-files=all) ]]; then
+    echo 'CI requires a clean checkout, including untracked files.' >&2
+    exit 1
+fi
+if [[ -e build/ci ]]; then
+    echo 'build/ci already exists; use a fresh checkout for CI.' >&2
+    exit 1
+fi
+
+mkdir -p build/ci
+{
+    git rev-parse HEAD
+    m68k-neogeo-elf-gcc --version
+    cc --version
+    python3 --version
+    mame -version
+    if command -v dpkg-query >/dev/null; then
+        dpkg-query -W
+    fi
+} > build/ci/toolchain.txt
+
+make -j2 BUILDDIR=build/ci cart test
+make BUILDDIR=build/ci native-test
+git diff --exit-code
+python3 ci/package.py
+echo 'CI PASS: cartridge, sanitizers, native replay, and release package'
