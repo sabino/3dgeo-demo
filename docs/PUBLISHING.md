@@ -6,15 +6,18 @@
 and manual dispatch. The `ROM and regression tests` job uses Ubuntu 24.04 to:
 
 1. Install ngdevkit from its [official PPA](https://github.com/dciabrin/ngdevkit#installing-pre-built-binary-packages).
-2. Build all cartridge assets from a clean checkout.
+2. Check local documentation links and the reviewed gallery's image/source hashes,
+   then build all cartridge assets from a clean checkout.
 3. Run the actual C renderer under ASan/UBSan on the host.
 4. Replay controls in headless MAME, checking rotation timing and light movement.
-5. Upload a ROM bundle, matching source snapshot, SHA-256 checksums, and diagnostics.
+5. Capture all eight gallery scenes with actual controller input in MAME.
+6. Upload a ROM bundle, matching source snapshot, SHA-256 checksums, and diagnostics.
 
 The ROM bundle contains `rom/3dgeo_demo.zip`, GnGeo/MAME game definitions,
-documentation, project and upstream SDK license notices, exact revision,
-package versions, and file hashes. Packaging also verifies that all five native
-screenshots were produced and can be decoded at the expected resolution.
+documentation (including the reviewed gallery), source files referenced by the
+guides, project and upstream SDK license notices, exact revision, package versions,
+and file hashes. Packaging verifies that all five regression screenshots and
+eight fresh gallery captures can be decoded at the expected resolution.
 It deliberately excludes `aes.zip` and `neogeo.zip`: CI uses ngdevkit's
 open-source test BIOS, but users supply their own emulator/BIOS installation.
 The source archive is made from the exact Git revision that was built.
@@ -42,7 +45,8 @@ docker run --rm --user "$(id -u):$(id -g)" --volume "$PWD:/workspace" 3dgeo-ci
 ```
 
 Results appear in `build/ci/dist/`; native screenshots are in
-`build/ci/native-captures/`. The native replay is a smoke test, not proof of
+`build/ci/native-captures/`, with all-model captures in `build/ci/gallery/`.
+Both sets and their logs are uploaded in `test-diagnostics`. The native replay is a smoke test, not proof of
 hardware accuracy or exhaustive rendering correctness. Review captures and
 test in GnGeo before releasing. Physical Neo Geo hardware is still unverified.
 

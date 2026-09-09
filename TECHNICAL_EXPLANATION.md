@@ -1,322 +1,341 @@
-# 3Dgeo Technical Explanation
+# How 3Dgeo renders 3D on Neo Geo
 
-3Dgeo is a Neo Geo/ngdevkit experiment that renders live 3D objects through a
-sprite-backed microframebuffer. The ROM still uses normal Neo Geo layers:
-sprites draw the 3D framebuffer and the FIX layer draws text. The unusual part
-is that the sprite layer is arranged as a dense grid of zoomed tiles so the
-68000 can update it like a very small software framebuffer.
+3Dgeo is a **software polygon renderer with a sprite-backed display**. The 68000
+transforms actual 3D vertices, projects triangles, and rasterizes their faces.
+The Neo Geo sprite hardware displays the result as an 80×56 grid of 4×4-pixel
+cells. It does not transform meshes or rasterize triangles for us.
 
-The design favors predictable hardware cost over visual precision. It uses a
-small logical resolution, fixed-point math, flat shaded triangles, and a compact
-model format generated at build time.
+![Cube rendered by the actual Neo Geo ROM in MAME](docs/images/cube.png)
 
-## Hardware Layer Use
+This is neither a raycaster nor an animation made from pre-rendered views.
+The 3D geometry is real; the contact shadows, edge visibility, and illumination
+are deliberately approximate. It is a single-object demo/template, not the
+separate voxel-game experiment.
 
-Sprites:
+For results, see the [native screenshot gallery](docs/SCREENSHOTS.md).
+To modify the renderer, start with the [template guide](docs/DEVELOPMENT.md).
 
-- Draw the full 3D image.
-- Provide the 80x56 logical framebuffer.
-- Use 320 hardware sprite strips: 80 columns times 4 vertical chunks.
-- Use C-ROM tiles as cell patterns.
-- Use sprite palette attributes as the grayscale shade selector.
+## 1. Separate the geometry from the display
 
-FIX:
+There are two pipelines: one runs on your development machine, the other on the
+Neo Geo. Floating-point OBJ processing and graphics conversion happen only
+during the build.
 
-- Draws menu and control text.
-- Uses a generated 5x7 uppercase font in the S-ROM.
-- Sits above sprites, so it is intentionally limited to a small overlay.
-
-Palettes:
-
-- `PAL_PAPER` is the normal white background.
-- `PAL_FACE_0` through `PAL_FACE_11` are grayscale face levels.
-- `PAL_EDGE` is the dark line color.
-- `PAL_SHADOW_LIGHT` is used by the dark-background light-control scene.
-- `PAL_SHADOW_DARK` is used for contact shadows.
-
-Sound:
-
-- The cart uses ngdevkit's null sound driver. Audio is out of scope.
-
-## Logical Framebuffer
-
-The renderer uses:
-
-- Logical width: 80 cells.
-- Logical height: 56 cells.
-- Visible cell size: 4x4 pixels.
-- Approximate visible framebuffer size: 320x224 pixels.
-- Source sprite tile size: 16x16 pixels.
-- Sprite zoom: configured so each 16x16 tile displays as a 4x4 block.
-
-Each framebuffer column is represented by four vertical sprite strips. The
-first three read 16 source tiles each; the last reads eight. Their SCB3 display
-windows count units of 16 screen pixels, independently of the source tile count:
-
-```text
-80 columns x 4 chunks = 320 sprite strips
-56 rows = 16 + 16 + 16 + 8 source tiles
-Display heights = 64 + 64 + 64 + 32 pixels
-SCB3 heights = 4 + 4 + 4 + 2 units
+```mermaid
+flowchart LR
+    OBJ["OBJ models"] --> Import["Build-time importer"]
+    Import --> Mesh["C vertex / triangle / normal tables"]
+    Mesh --> Transform["68000: rotate and project"]
+    Transform --> Raster["Sort, shade, fill spans, draw edges"]
+    Raster --> Cells["RAM: 80 × 56 cell words"]
+    Cells --> Upload["Write sprite tile / palette pairs"]
+    Tiles["Build-time tile atlas in C-ROM"] --> Sprites["Neo Geo: shrink sprite strips"]
+    Upload --> Sprites
+    Sprites --> Output["320 × 224 display"]
+    FIX["FIX-layer control text"] --> Output
 ```
 
-This layout also keeps the sprite count under the visible hardware budget and
-avoids building one hardware sprite per logical pixel.
-Vertical shrinking does not shrink the SCB3 window. The historical two-band
-layout both overlapped display windows and exceeded the 16-source-tile limit
-before the L0 lookup repeats its last line. This produced missing and stretched
-faces in native captures even when the RAM framebuffer was correct. Four
-non-overlapping windows avoid both problems and leave 80 active strips per
-scanline. See the [display-window and last-line-repeat caveats](https://wiki.neogeodev.org/index.php/Sprite_shrinking).
+The atlas contains small reusable patterns, not pictures of cubes or pyramids.
+Choosing a different model does not select a new sprite animation: it feeds
+different vertex and triangle tables into the same CPU renderer.
 
-## Tile Atlas
+The hardware's tiles are stored in cartridge graphics ROM. We do **not** upload
+new bitmap pixels to C-ROM each frame. We change the tile references and palette
+attributes in the sprite tilemaps.
 
-`tools/make_sprite_tiles.py` generates the C-ROM atlas used by the sprite
-framebuffer. Runtime code uses tile number plus palette to describe a cell:
+## 2. What one framebuffer cell actually contains
+
+In [src/main.c](src/main.c), the logical display is:
 
 ```c
+static u16 frame_words[56][80];
 word = (palette << 12) | tile;
 ```
 
-The C-ROM atlas reserves the first 256 sprite tiles and places framebuffer
-patterns after that. The runtime adds `SPRITE_START_TILE` before writing the
-tile index to sprite VRAM.
+The high four bits select one of this renderer's 16 palettes. The low twelve
+bits identify a pattern within its atlas. That is a software encoding, not the
+hardware's complete sprite attribute format.
 
-The atlas contains:
+During `blit_frame()`, one RAM word becomes two hardware words:
 
-- Clear and paper tiles.
-- Ordered-dither shade tiles.
-- Solid shade tiles used for filled 3D cells.
-- Simple edge tiles retained for line experiments.
-- Coverage-mask tiles retained from earlier masked-cell renderer tests.
-
-The current hot path primarily uses solid shade cells. That is faster and more
-stable than trying to update fine coverage patterns for every cell.
-
-## Build-Time Model Pipeline
-
-The ROM does not parse text OBJ files. OBJ is a source format for the build.
-
-`tools/obj_to_model.py` reads every model listed by the Makefile and emits
-`build/viewer/generated/model_data.h`. The generated header contains compact C arrays
-for the Neo Geo runtime:
-
-- Fixed-point vertices.
-- Triangulated faces.
-- Per-triangle normals.
-- Per-edge normals.
-- A model table with names and counts.
-
-The converter supports:
-
-- `v` vertex records.
-- `f` face records.
-- Positive and negative OBJ indices.
-- Face index forms with optional texture and normal fields.
-- Fan triangulation for quads and polygons.
-- Centered bounding-box normalization to a fixed radius.
-
-The converter intentionally ignores:
-
-- Materials.
-- Textures.
-- OBJ vertex normals.
-- Groups and smoothing flags.
-- Runtime streaming or loading from memory card.
-
-Current hard limits come from `u8` runtime indices:
-
-- 255 vertices per model.
-- 255 triangles per model.
-- 255 perimeter edges per model.
-
-The bundled ball and donut are intentionally low-poly. Dense curved models look
-better but can become too slow for the target frame rate.
-
-## Primitive Assets
-
-`tools/make_primitive_objs.py` generates readable primitive OBJ files:
-
-- `ball.obj`
-- `cone.obj`
-- `cylinder.obj`
-- `donut.obj`
-
-The hand-maintained source assets are:
-
-- `cube.obj`
-- `pyramid.obj`
-- `tetrahedron.obj`
-
-The torus/donut is non-convex, so the converter keeps its original face normal
-orientation instead of applying the convex outward-normal correction used for
-the other bundled models.
-
-## Runtime Render Pipeline
-
-Each active frame follows this order:
-
-1. Read Neo Geo controller input.
-2. Update model rotation, zoom, or light position.
-3. Rotate model vertices with fixed-point sine/cosine lookup tables.
-4. Project rotated vertices into the 80x56 framebuffer.
-5. Rotate triangle normals.
-6. Compute average triangle depth.
-7. Sort triangles from far to near.
-8. Clear the logical framebuffer.
-9. Draw a contact shadow or light-scene cast shadow.
-10. Fill visible triangles as horizontal spans.
-11. Draw optional model edges.
-12. Draw picker markers or the light marker when needed.
-13. Wait for vblank.
-14. Upload the logical framebuffer to sprite VRAM.
-
-There are no baked animation frames. The model is transformed every frame on
-the 68000.
-
-## Math Model
-
-Angles use 256 steps per revolution:
-
-```text
-0..255 -> 360 degrees (1.40625 degrees per step)
+```c
+tile_word = 256 + (word & 0x0fff);
+attribute_word = (word >> 12) << 8;
 ```
 
-Sine and cosine are Q8 fixed-point values:
+For example, face palette 8 with solid pattern 9 is RAM word `0x8009`.
+Its SCB1 tile/attribute pair is `0x0109, 0x0800`. One 16×16 source tile
+then shrinks to a 4×4 screen block in the selected shade.
 
-```text
-256 == 1.0
+This avoids calculating 16 separate output pixels for a uniformly colored
+block. It does **not** eliminate vertex transforms, divisions, triangle sorting,
+overdraw, or the cost of writing tilemaps.
+
+### Patterns versus colors
+
+[make_sprite_tiles.py](tools/make_sprite_tiles.py) generates 34 atlas patterns
+after 256 reserved tile slots: clear/paper, nine shade patterns, eight line
+patterns, and fifteen quadrant masks. Shade 9 is solid; shades 1–8 use an 8×8
+Bayer pattern. Shrinking subsamples these patterns rather than smoothing them.
+
+Filled faces always use the solid `TILE_SHADE_9`; their brightness comes from
+the palette, **not** from nine different dithered face textures. The current
+edge pass uses shade 8, and contact shadows / light halos use shade 3.
+Dedicated line and quadrant-mask tiles remain from earlier experiments and
+are not used by the current face rasterizer.
+
+The FIX layer separately draws the small control labels. That is why the text
+has finer detail than the 4×4 geometry cells.
+
+## 3. Why the framebuffer uses four sprite bands
+
+A Neo Geo hardware sprite is a vertical strip of 16×16 tiles. This renderer
+places 80 strips side by side, each four screen pixels wide, in four vertical
+bands. It uses sprite indices 1–320.
+
+| Band | Logical rows | Screen Y | Source tiles per strip | SCB3 height |
+| --- | --- | --- | --- | --- |
+| 0 | 0–15 | 0–63 | 16 | 4 |
+| 1 | 16–31 | 64–127 | 16 | 4 |
+| 2 | 32–47 | 128–191 | 16 | 4 |
+| 3 | 48–55 | 192–223 | 8 | 2 |
+
+SCB2's `0x033f` selects horizontal shrink 3 and vertical shrink 63.
+SCB3 height is measured in **16-screen-pixel window units**, independently of
+the number of source tiles. Thus a 64-pixel band needs height 4, not 16.
+
+Two different hardware mistakes caused the historical stretched/missing faces:
+
+1. An oversized display window kept earlier bands active over later bands.
+2. Beyond sixteen shrunken source tiles, the vertical lookup repeats the last
+   source line rather than continuing linearly through more tile rows.
+
+A correct RAM framebuffer can therefore still produce a broken native screen.
+The four-band layout avoids both problems. It keeps 80 strips active per
+scanline, below the hardware's 96-strip limit, while using 320 of the 381
+displayable sprites. See the hardware references for
+[sprite limits/registers](https://wiki.neogeodev.org/index.php/Sprites) and
+[shrinking caveats](https://wiki.neogeodev.org/index.php/Sprite_shrinking).
+
+### Which registers are written?
+
+These are **VRAM word addresses**, not CPU memory addresses.
+
+| Block | Base | Role in this demo | Updated |
+| --- | --- | --- | --- |
+| SCB1 | `0x0000` | Tile number and palette/attribute pairs | Every dirty upload |
+| SCB2 | `0x8000` | Shrink coefficients | Initialization |
+| SCB3 | `0x8200` | Vertical position and display-window height | Initialization |
+| SCB4 | `0x8400` | Horizontal position | Initialization |
+
+Initialization sets `REG_VRAMMOD = 0x200`, so three consecutive writes starting
+at SCB2 advance through SCB2, SCB3, and SCB4 for the same strip. They are not
+three fields stored inside SCB2. Uploads instead set the increment to 1.
+
+For cell `(x, y)`, the band is `y / 16`, its local row is `y % 16`, and
+its sprite index is `1 + band * 80 + x`. The pair begins at
+`sprite * 64 + local_row * 2` in SCB1.
+
+## 4. Import meshes once, not every frame
+
+[obj_to_model.py](tools/obj_to_model.py) reads OBJ `v` and `f` records.
+It strips comments, resolves positive/negative vertex indices, accepts slash
+forms such as `1/2/3`, and fan-triangulates polygons. Texture coordinates,
+OBJ normals, materials, and smoothing groups are not used.
+
+Vertices are centered on the bounding-box midpoint. The largest box dimension
+is scaled to 240 model units and coordinates are rounded to integers. Despite
+the name `MODEL_RADIUS`, this is **not** a normalization onto a radius-120 sphere.
+
+Triangle normals are computed during import and stored in Q8 form. Face
+perimeters become edge records; shared edges are not deduplicated. A quad
+therefore yields two triangles but four perimeter edges, not a diagonal edge.
+
+| Model | Vertices | Triangles | Edge records | Edge pass |
+| --- | ---: | ---: | ---: | --- |
+| Cube | 8 | 12 | 24 | Yes |
+| Pyramid | 5 | 6 | 16 | Yes |
+| Tetrahedron | 4 | 4 | 12 | Yes |
+| Ball | 26 | 48 | 112 | No |
+| Donut | 32 | 64 | 128 | No |
+| Cone | 14 | 22 | 48 | Yes |
+| Cylinder | 24 | 44 | 72 | Yes |
+
+The importer caps each of those counts at 255 because runtime indices are
+`u8`. The bundled maximums are smaller: 32 vertices, 64 triangles, 128 edges.
+
+Normals are normally flipped outward using a convex, origin-centered heuristic.
+The mesh named exactly `donut` bypasses it to preserve its inward-facing hole.
+That is a hard-coded exception, not a general concave-mesh solution. Fan
+triangulation is also not a robust triangulator for arbitrary concave polygons.
+
+## 5. Rotate actual 3D points, then project them
+
+Positions are integer model units; sine/cosine coefficients and unit normals
+are Q8 (`256 == 1.0`). Do not confuse those two coordinate conventions.
+
+[viewer_core.h](src/viewer_core.h) contains a 256-entry signed sine table.
+Cosine looks up the same table one quarter-turn later. The angle byte wraps
+naturally: one step is 1.40625 degrees. There is no runtime trigonometry call.
+
+`rotate_vec()` applies pitch about X, yaw about Y, then roll about Z.
+A fixed-point multiplication uses a 32-bit intermediate and shifts by eight:
+
+```c
+qmul(a, b) = ((s32)a * (s32)b) >> 8;
 ```
 
-Rotation is applied in pitch, yaw, roll order. The same rotation function is
-used for vertices and normals.
-The VBlank callback advances a wrapping 16-bit clock. Input movement and
-automatic preview rotation consume elapsed ticks, not render-loop iterations.
-An eight-tick catch-up cap bounds jumps after debugger stalls. The demo supplies
-its own VBlank wait because ngdevkit's `ng_wait_vblank` owns its own callback.
+Vertices, triangle normals, and enabled edge normals use this rotation.
+Truncation at each multiply makes this an approximation to an exact rotation.
 
-Projection is perspective-like but deliberately cheap:
+Projection uses the transformed coordinates:
 
 ```text
-screen_x = center_x + x * scale_x / (z + camera_distance)
-screen_y = center_y - y * scale_y / (z + camera_distance)
+d  = max(z + camera_distance, 160)
+sx = 40 + integer_divide(x * 92, d)
+sy = 28 - integer_divide(y * 76, d)
 ```
 
-The denominator is clamped so geometry near the camera does not explode.
+The camera looks toward increasing Z; a larger denominator means a farther,
+smaller point. X and Y have deliberately different scale constants. The default
+camera distance is 760, adjustable from 420 to 1300.
 
-## Triangle Filling
+At the default distance, a transformed point `(120, 120, 0)` projects to logical
+cell `(54, 16)`, whose top-left screen position is `(216, 64)`.
+This is a perspective division, not an orthographic or distance-layer trick.
 
-The rasterizer is span-based:
+Clamping the denominator prevents extreme division results but is **not**
+near-plane clipping. A triangle crossing the camera region is not cut into a
+valid visible polygon; the renderer can distort it.
 
-1. Find the triangle's screen-space vertical bounds.
-2. Walk each edge and record left/right x limits for each framebuffer row.
-3. Clamp spans to the 80x56 target.
-4. Fill each row with one shade word.
+## 6. Visibility and triangle rasterization
 
-This intentionally avoids sub-cell coverage, barycentric interpolation, and a
-Z-buffer. The renderer trades precision for speed and simplicity.
+For each render, `render_model()` transforms every vertex and triangle normal.
+It sorts all triangles by mean rotated Z, farthest first, using insertion sort.
+Faces with rotated normal Z below zero are then filled in that order.
 
-## Lighting
+This is a painter's algorithm. Later triangles overwrite earlier cells.
+The normal-Z test is a cheap back-face approximation, not a per-pixel depth
+test or a full perspective-facing test using the face-to-camera vector.
 
-Lighting is a stylized point-light cue:
+`fill_tri_spans()` clears two small left/right boundary arrays over the
+triangle's clamped Y range. It walks the three projected edges using Q8 X
+increments, collects each row's extrema, and fills the clipped horizontal span.
+The whole triangle uses one shade word.
+
+There is no depth buffer, sub-cell coverage, antialiasing, or interpolated
+texture coordinate. Intersecting polygons and some non-convex views can be
+ordered incorrectly. On a 4×4 grid, thin triangles and rotating silhouettes
+also change in discrete steps.
+
+Edges are drawn **after all faces**, with a Bresenham-style line walk and a
+rotated edge-normal threshold of `z < -16`. They are not clipped against
+already-drawn face depths. This can produce hidden-edge leaks. Ball and donut
+skip this pass to avoid noisy outlines and extra work.
+
+## 7. Lighting: a palette selection per triangle
+
+The renderer computes a stylized point-light intensity:
 
 ```text
-plane = dot(original_normal, original_face_vertex)
-intensity = (dot(rotated_normal, light_position) - plane) / 512 + 24
+plane     = dot(original_normal, original_face_vertex)
+light_dot = dot(rotated_normal, light_position)
+intensity = ((light_dot - plane) >> 9) + 24
 ```
 
-The intensity is scaled into 12 grayscale palette levels once per triangle.
-The plane offset is rotation-invariant, so coplanar triangles receive identical
-tones without rounding their transformed centroids independently. The old
-triangle-dependent screen-space row bias is removed: it introduced false seams
-across flat faces. This remains stylized lighting without normalized light
-vectors or physical distance attenuation.
+For a planar face, `normal · point` is constant over the plane. Keeping that
+offset in object space avoids separately rounded transformed triangle centroids.
+Cube triangles that share a face therefore receive the same shade rather than
+showing an artificial diagonal lighting seam.
 
-The `CUBE LIGHT` scene switches to a darker background, exposes the light
-position through the controller, and draws a white marker whose radius changes
-with projected depth. This mode is meant to make the shading model easier to
-inspect.
+`face_level_for_intensity()` maps the result into twelve levels. It computes
+`((intensity + 130) * 16) / 36`, clamps to 0–176, adds 8 to round, clamps again,
+then shifts by four. The twelve face palettes range from dark gray to near-white.
 
-## Edges
+This saves per-cell illumination calculations and palette rewrites during
+animation. But it is not physically based Lambertian lighting: there is no
+normalization of the light-to-surface vector, inverse-square attenuation,
+specular reflection, or shadow visibility test. Equal coplanar tones also assume
+consistent imported normals and plane offsets.
 
-Edges are optional per model:
+## 8. What the shadows and light marker really are
 
-- Cube, pyramid, tetrahedron, cone, and cylinder keep dark edge lines for
-  readability.
-- Ball and donut skip edge drawing because dense edge sets make them noisy and
-  slower.
+![Movable light scene with a projected marker](docs/images/light.png)
 
-Edges are generated from original OBJ face perimeters, not from a mesh
-deduplication pass. That is simple and predictable, but it can draw duplicate
-lines when neighboring faces share an edge.
+The ordinary scene's contact shadow is a seven-row, tapered screen-space blob
+under the projected bounding box. Its horizontal radius is clamped to 8–26
+logical cells. It follows the model's projected extent, not a ground plane.
 
-## Sprite Upload
+The light scene offsets a similar nine-row blob away from the projected light,
+with horizontal radius clamped to 10–32 cells. The function name
+`draw_light_cast_shadow()` does not mean it projects mesh vertices onto a
+receiver surface. Neither shadow is a geometric cast shadow.
 
-The logical framebuffer lives in `frame_words[FRAME_H][FRAME_W]`. When it is
-dirty, the ROM writes every cell into sprite VRAM:
+The light marker is another CPU-drawn element in the same cell buffer. Its
+radius changes with depth and is clamped to 2–6 cells. It is painted after the
+model, without depth occlusion, and can leave the viewport. The light is not a
+separate hardware sprite, and its on-screen marker is not a lighting pass.
 
-- SCB1 receives tile index and palette attribute words for each strip.
-- SCB2 is initialized once with strip position, height, and zoom.
-- Each frame upload touches 80 columns times 56 cells.
+## 9. VBlank timing is not the rendered frame rate
 
-The strip positions are static, so per-frame work is mostly tile and attribute
-updates. This is the core reason the sprite microframebuffer path is faster
-than the earlier experiments that tried to use the FIX layer for the whole
-image.
+A VBlank callback increments a wrapping 16-bit clock. The loop consumes elapsed
+ticks for rotation, zoom, and light movement, with an eight-tick catch-up cap.
+At nominal 60 Hz, one angle step per tick is 84.375 degrees per second.
 
-## Input Details
+The picker and light scene redraw continuously. An ordinary model redraws only
+when its controls change it. Input is sampled by the render loop, so very short
+presses can still be missed when a render is slow. Returning to the picker uses
+COIN/select from `REG_STATUS_B`; D-pad/buttons come from `REG_P1CNT`.
 
-The ROM reads:
+A dirty buffer is uploaded after waiting for VBlank. This schedules the
+**start** of the upload; it does not prove all writes finish inside blanking.
+There is one RAM framebuffer and no atomic front/back sprite-bank swap.
+Tearing and timing behavior still need physical-hardware profiling.
 
-- D-pad and A/B/C/D from `REG_P1CNT`.
-- COIN/select from `REG_STATUS_B`.
+The native regression test checks that rotation broadly tracks a held input's
+VBlank interval. Its `rendered_frames` counter is diagnostic, not a certified
+FPS benchmark. Emulator speed percentage is host emulation speed, not game FPS.
 
-START is intentionally not used by the ROM. In this ngdevkit setup, the
-constants for `CNT_UP` and `CNT_START1` both use bit 0, but they apply to
-different hardware input bytes. Earlier builds treated them as interchangeable,
-which made UP behave like a mode reset. The current ROM uses COIN to return to
-the picker and leaves START alone.
+## 10. Cost and limits
 
-## Performance Notes
+| Resource / work | Current cost | What it means |
+| --- | ---: | --- |
+| Logical target | 4,480 cells | 16 physical pixels per cell |
+| Main RAM cell buffer | 8,960 bytes | Two bytes per cell; not total RAM use |
+| Span boundary arrays | 224 bytes | Two 56-entry signed-16 arrays |
+| Sine lookup | 512 bytes | Read-only coefficients |
+| Sprite strips | 320 total / 80 per scanline | Four non-overlapping bands |
+| Dirty upload data | 8,960 16-bit VRAM writes | 17,920 bytes, plus address/modulo writes |
+| SCB1 address selections | 320 per dirty upload | One per strip |
 
-The fast path comes from a few constraints:
+The fixed per-render costs are clearing all cells and uploading a dirty frame.
+Variable costs include vertex/normal transforms, worst-case O(T²) insertion
+sorting, visible span overdraw, and optional edge walks. A higher triangle
+count can cost more even if the object covers the same screen area.
 
-- Low logical resolution.
-- One word per framebuffer cell.
-- Static sprite strip layout.
-- Fixed-point rotation and projection.
-- One shade per triangle span row.
-- Small model counts.
-- No runtime OBJ parser.
-- No per-pixel depth buffer.
+The scheme makes display cost predictable; it does not make software 3D free.
+A larger logical resolution increases CPU work and can exhaust the scanline
+sprite limit. Simply adding more sprite columns is not an unlimited quality
+setting. Conversely, palette changes cannot reduce the number of transforms
+or fix incorrect triangle ordering.
 
-The expensive parts are:
+There are intentionally no universal FPS claims here. The current tests are
+host sanitizers plus emulator control/capture regressions, not a formal
+physical Neo Geo benchmark.
 
-- Rotating all vertices and normals.
-- Sorting all triangles.
-- Filling spans for every visible face.
-- Uploading the whole dirty framebuffer to VRAM.
+## Code-reading map
 
-The ball and donut were reduced in complexity because curved meshes cost more
-triangles and more spans. They are still recognizable, but they are intentionally
-coarse to keep interaction responsive.
+| Question | Start here |
+| --- | --- |
+| How does an OBJ become a C mesh? | [obj_to_model.py](tools/obj_to_model.py): `convert_model()` |
+| How are 4×4 cells displayed? | [main.c](src/main.c): `init_sprite_framebuffer()`, `blit_frame()` |
+| How are points transformed? | [main.c](src/main.c): `rotate_vec()`, `project_vertex()` |
+| How are faces sorted and filled? | [main.c](src/main.c): `render_model()`, `fill_tri_spans()` |
+| How is a shade chosen? | [main.c](src/main.c): `light_for_tri_position()`, `face_level_for_intensity()` |
+| Why do shadows look approximate? | [main.c](src/main.c): `draw_contact_shadow()`, `draw_light_cast_shadow()` |
+| How is movement timed? | [viewer_core.h](src/viewer_core.h), [main.c](src/main.c): main loop |
+| How are screenshots reproduced? | [gallery_probe.lua](tools/gallery_probe.lua), [capture guide](docs/SCREENSHOTS.md) |
 
-## Known Limitations
-
-- No Z-buffer.
-- No clipping against the near plane.
-- No material or texture support.
-- No runtime `.obj` loading.
-- No sub-cell antialiasing.
-- No true perspective-correct interpolation.
-- No hidden-edge merge pass.
-- No audio.
-- No formal hardware benchmark pass yet.
-
-## Public Release Notes
-
-This repository should be treated as an experiment and reference prototype. It
-is useful for studying a Neo Geo sprite microframebuffer, build-time OBJ import,
-and fixed-point 3D rendering under severe constraints. It should not be treated
-as a drop-in engine for a finished commercial-style Neo Geo game without more
-profiling, cleanup, and hardware testing.
+For historical alternatives, including FIX rendering and masked-cell experiments,
+use the [history guide](docs/HISTORY.md). Those are preserved in Git rather than
+maintained as selectable renderer backends.

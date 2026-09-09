@@ -28,8 +28,22 @@ def main():
         "docs/HISTORY.md": root / "docs/HISTORY.md",
         "docs/PUBLISHING.md": root / "docs/PUBLISHING.md",
         "docs/LICENSING.md": root / "docs/LICENSING.md",
+        "docs/DEVELOPMENT.md": root / "docs/DEVELOPMENT.md",
+        "docs/SCREENSHOTS.md": root / "docs/SCREENSHOTS.md",
+        "docs/images/manifest.json": root / "docs/images/manifest.json",
         "toolchain.txt": build / "toolchain.txt",
     }
+    for name in ("cube", "pyramid", "tetrahedron", "ball", "donut", "cone", "cylinder", "light"):
+        files[f"docs/images/{name}.png"] = root / f"docs/images/{name}.png"
+        with Image.open(build / f"gallery/{name}.png") as capture:
+            assert capture.size == (320, 224), f"Unexpected gallery dimensions: {name}"
+            capture.verify()
+    # Keep documentation's local code links usable in the extracted ROM bundle.
+    # Only tracked source paths are eligible; never include build output or BIOSes.
+    tracked = subprocess.check_output(["git", "ls-files", "-z"], cwd=root).decode().split("\0")
+    for name in tracked:
+        if name == "Makefile" or name.startswith(("src/", "tools/", "assets/models/", "tests/", "ci/", ".github/")):
+            files[name] = root / name
     for package in ("ngdevkit", "ngdevkit-toolchain", "ngdevkit-gngeo"):
         files[f"licenses/{package}-copyright.txt"] = Path(f"/usr/share/doc/{package}/copyright")
     for license_name in ("GPL-2", "GPL-3", "LGPL-3"):

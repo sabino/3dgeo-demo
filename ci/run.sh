@@ -23,8 +23,10 @@ mkdir -p build/ci
     fi
 } > build/ci/toolchain.txt
 
+make docs-check
 make -j2 BUILDDIR=build/ci cart test
 make BUILDDIR=build/ci native-test
+make BUILDDIR=build/ci screenshots
 git diff --exit-code
 python3 ci/package.py
-echo 'CI PASS: cartridge, sanitizers, native replay, and release package'
+echo 'CI PASS: docs, cartridge, sanitizers, native replay, gallery, and release package'

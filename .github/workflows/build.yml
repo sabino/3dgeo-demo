@@ -43,8 +43,10 @@ jobs:
           path: |
             build/ci/toolchain.txt
             build/ci/native-test.log
+            build/ci/gallery.log
             build/ci/captures/
             build/ci/native-captures/
+            build/ci/gallery/
           if-no-files-found: warn
           retention-days: 14
 

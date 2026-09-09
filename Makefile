@@ -51,7 +51,7 @@ CART := $(ROM)/$(GAMEROM).zip
 GNGEO_HASH := $(ROM)/gngeo_data.zip
 MAME_HASH := $(ROM)/neogeo.xml
 
-.PHONY: all cart assets check-ngdevkit gngeo run test hosttest native-test
+.PHONY: all cart assets check-ngdevkit gngeo run test hosttest native-test screenshots docs-check
 
 all: cart
 
@@ -157,3 +157,15 @@ native-test: cart $(ROM)/aes.zip
 	grep -q '^VIEWER PASS:' $(BUILDDIR)/native-test.log
 
 -include $(BUILDDIR)/main.d
+
+screenshots: cart $(ROM)/aes.zip
+	mkdir -p $(BUILDDIR)/gallery
+	xvfb-run -a env VIEWER_ELF="$(ELF)" SDL_VIDEODRIVER=x11 SDL_AUDIODRIVER=dummy \
+		mame aes -cart $(GAMEROM) -rompath $(ROM) -hashpath $(ROM) \
+		-video soft -sound none -window -skip_gameinfo -noplugins -seconds_to_run 36 \
+		-nothrottle -autoboot_delay 0 -autoboot_script tools/gallery_probe.lua \
+		-snapshot_directory $(BUILDDIR)/gallery > $(BUILDDIR)/gallery.log 2>&1
+	grep -q '^GALLERY PASS:' $(BUILDDIR)/gallery.log
+
+docs-check:
+	$(PYTHON) tools/check_docs.py

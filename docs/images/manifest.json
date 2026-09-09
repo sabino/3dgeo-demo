@@ -1,0 +1,47 @@
+{
+  "description": "Unmodified MAME native screen snapshots; controller replay, no game RAM writes.",
+  "dimensions": [
+    320,
+    224
+  ],
+  "checkout_commit_at_capture": "87167f8d02fa1c894624efdaef0c0f4656cfe1c9",
+  "emulator": "0.289 (mame0289-dirty)",
+  "compiler": "m68k-neogeo-elf-gcc (GCC) 15.3.0",
+  "rom_sha256": "00b91e36cd6f0e559abb802188235b2bf233b88f66d9af17fb0b7a87cd297079",
+  "elf_sha256": "48efee9714c93c6b3a1b088abce92a3db5ce8e9a8f0ed741f9931bef127f09b7",
+  "source_sha256": {
+    "src/main.c": "747cab32d6530d85125c819b21d1855c1ac2a770326241006171e7647f4a06ff",
+    "src/viewer_core.h": "ff122dcf6da4226b5d37a9d72cfb923ea7ae671f91c98711156fa72d142f817e",
+    "tools/make_sprite_tiles.py": "511b82231783d1624aa4825fe5b0e07132c893a38ec340c58c757c763e796eca",
+    "tools/make_fix_tiles.py": "babc75b1ca4a3b2038cb9ef168238e9e5987738e9fd0c752a16a5cdfbb620e6e",
+    "tools/obj_to_model.py": "155ec7c24b4c02e8dc8c6d03f998ece1ca4ec98679b18da16be024413ecfbb59",
+    "tools/gallery_probe.lua": "36ca5870541ab9b472a33768d88230e914d26fd1cb1bfe3837b34dd80c2685ef",
+    "assets/models/ball.obj": "3962d92499ce617e24bd78acce6459d39a4767b59f62ae594ba446deefde5094",
+    "assets/models/cone.obj": "3039c4951bfc8b00f6f5103c2441915f6849f45d975a26b4d8a9b47349f30b6f",
+    "assets/models/cube.obj": "43be935323d70867bde8491058018090c3af0ce2e63a78c1d0501bcd346caf5d",
+    "assets/models/cylinder.obj": "67452f69b4fb18d8b8275af737715d4e2bfe0c3a8dd647b75239c893b6e42cb0",
+    "assets/models/donut.obj": "20e60ab9b1c385e2b80465d7cb79a13a816870847f3328311d5a5a901f1d1c1f",
+    "assets/models/pyramid.obj": "65e425b6655fdcc6368a20ce7d7947bd9042db8e1bf1b1af33f6b5c186ad5a04",
+    "assets/models/tetrahedron.obj": "1e15925fe8afe098c4c111eb1d4fadb5056099b319a0dfeb40d5877e39175eff"
+  },
+  "captures": [
+    "CAPTURE model=cube frame=130 yaw=253",
+    "CAPTURE model=pyramid frame=370 yaw=47",
+    "CAPTURE model=tetrahedron frame=610 yaw=161",
+    "CAPTURE model=ball frame=850 yaw=17",
+    "CAPTURE model=donut frame=1090 yaw=125",
+    "CAPTURE model=cone frame=1330 yaw=235",
+    "CAPTURE model=cylinder frame=1570 yaw=87",
+    "CAPTURE model=light frame=1810 yaw=12"
+  ],
+  "image_sha256": {
+    "cube.png": "8307610242d0ee6b01813537ff18acb46aeb7e408b97ee7b01212c23c79bc9c3",
+    "pyramid.png": "3fdd8294ea1e0a8fa3cd8bdf04ad218fc49c312283aec5d19bedbe20ae9850ca",
+    "tetrahedron.png": "21076e668c395ae486c5bd8139449fa8bc632851e5ac064b43370417365ae93b",
+    "ball.png": "ad55094f9c6b18217a52dbafd2bd645e62bdc0dee9ec223a198e8e6e23265311",
+    "donut.png": "2b120192359f87859985a6403ba86b2be016c51b332bf6ae0d5935cb1f6032e5",
+    "cone.png": "ed3df38d2f7036e6cdd69cd29f8bbb9eb5ea819480beda7540f4f0229c6d3ca9",
+    "cylinder.png": "ac3d6fc62b390c4ece9f26c39e9de797cb8edf523286d55ac30753c784055d2f",
+    "light.png": "d872d43d032ebcd75ade6cdee55d83716e969909ca1bf2f0d2279f302d38a316"
+  }
+}

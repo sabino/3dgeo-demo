@@ -9,6 +9,26 @@ explore how far a framebuffer-like 3D pipeline can be pushed on Neo Geo while
 still using normal cartridge assets, the 68000 CPU, and the stock ngdevkit
 build flow.
 
+| Cube: palette-shaded faces | Movable light and approximate shadow |
+| --- | --- |
+| ![Actual Neo Geo cube rendering in MAME](docs/images/cube.png) | ![Actual Neo Geo light scene in MAME](docs/images/light.png) |
+
+Native 320×224 emulator captures, unmodified. Geometry uses 4×4-pixel cells;
+the text uses the finer FIX layer. [See all eight scenes and reproduce the captures](docs/SCREENSHOTS.md).
+
+## Documentation
+
+- [How the renderer works](TECHNICAL_EXPLANATION.md): cell encoding, sprite bands,
+  fixed-point perspective, visibility, palette lighting, shadows, and hardware costs.
+- [Develop from the template](docs/DEVELOPMENT.md): build/run, add a mesh, change the
+  look, understand limits, and diagnose rendering problems.
+- [Native screenshot gallery](docs/SCREENSHOTS.md): every model, visual caveats,
+  and the capture/review workflow.
+- [CI and publishing](docs/PUBLISHING.md), [project history](docs/HISTORY.md),
+  and [commercial use / attribution](docs/LICENSING.md).
+
+## What this project is
+
 This is the standalone **demo/template**, not the later voxel-game experiment.
 All 35 original commits are preserved unchanged. The `legacy-demo-baseline` tag
 marks the starting point; see [the history guide](docs/HISTORY.md). The independent
@@ -23,7 +43,9 @@ The current ROM renders OBJ-derived primitive models through a sprite-backed
 tile shrunk by sprite zoom to a visible 4x4 block. The 68000 rotates vertices
 and normals, projects triangles, sorts faces, fills spans, applies simple
 point-light shading, draws optional silhouette/detail edges, and uploads the
-result to sprite VRAM every frame.
+result to sprite VRAM on each dirty frame. This is actual software-rendered 3D,
+not a raycaster or pre-rendered sprite rotation. The hardware sprites display
+the CPU's low-resolution output; they do not replace the geometry calculations.
 
 ## Status
 
@@ -79,12 +101,16 @@ The Makefile discovers a relocatable SDK from the compiler. Override
 ```sh
 make test          # Host ASan/UBSan regressions and fixed-pose captures
 make native-test   # MAME controller replay, rotation check, and screenshots
+make screenshots   # MAME capture of all seven models plus the light scene
+make docs-check    # Local links and reviewed screenshot/source checksums
 ```
 
 Host tests need a C compiler; native tests additionally need MAME, Xvfb and
 xauth. The native test uses ngdevkit's open-source BIOS, which MAME warns does
-not match the official BIOS checksums. Captures and logs are generated under
-`build/viewer/`, not committed. Physical hardware is not yet verified.
+not match the official BIOS checksums. Raw captures and logs are generated under
+`build/viewer/` and ignored by Git. The reviewed gallery in `docs/images/` is
+committed, with emulator/version and checksum provenance. Physical hardware is
+not yet verified.
 
 The 256-step angles improve angular resolution, not the hardware frame rate.
 At 60 Hz, rotation advances 84.375 degrees/second; elapsed ticks compensate for
@@ -137,6 +163,10 @@ Model modes:
 - `tools/make_sprite_tiles.py` - generates the C-ROM tile atlas used by the
   sprite framebuffer.
 - `tools/make_fix_tiles.py` - generates the S-ROM/FIX font and tile data.
+- `tools/gallery_probe.lua` - real-input native screenshot replay.
+- `tools/publish_screenshots.py` - publishes unchanged captures with provenance.
+- `tools/check_docs.py` - checks local links and gallery/source integrity.
+- `docs/` - development, screenshot, history, publishing, and licensing guides.
 - `TECHNICAL_EXPLANATION.md` - detailed architecture and pipeline notes.
 
 ## OBJ Import
