@@ -46,8 +46,9 @@ test in GnGeo before releasing. Physical Neo Geo hardware is still unverified.
 
 ## First GitHub publication (manual)
 
-No GitHub repository is created by these scripts. When the name and visibility
-are agreed, create an **empty** repository (no generated README or license),
+The project lives at [sabino/3dgeo-demo](https://github.com/sabino/3dgeo-demo).
+No GitHub repository is created by the build scripts. For a new independent
+fork, create an **empty** repository (no generated README or license),
 add its URL as `origin`, and push the current branch plus the historical tag.
 For example, with a chosen public repository name:
 
@@ -57,11 +58,12 @@ git push -u origin HEAD
 git push origin legacy-demo-baseline
 ```
 
-These are instructions, not actions already performed. The entire original
+These commands document initial setup; do not recreate the existing repository.
+The entire original
 35-commit history is preserved; see [HISTORY.md](HISTORY.md). Do not force-push
 or squash it when publishing. Review historical content as well as HEAD before
 making it public. Generated files, BIOS archives, and local configuration must
-remain untracked. No badge points to a nonexistent GitHub repository.
+remain untracked. Update the README badge if publishing a fork under another name.
 
 After the first successful hosted run, configure a branch ruleset requiring
 `ROM and regression tests` before merges, and enable GitHub secret scanning /

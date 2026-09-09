@@ -1,5 +1,7 @@
 # 3Dgeo Demo / Template
 
+[![Build and test](https://github.com/sabino/3dgeo-demo/actions/workflows/build.yml/badge.svg)](https://github.com/sabino/3dgeo-demo/actions/workflows/build.yml)
+
 3Dgeo is an experimental Neo Geo/ngdevkit model demo and template that treats the sprite
 hardware as a tiny grayscale framebuffer for live 3D objects. It is not a
 general game engine and it is not a finished rendering library. The goal is to
@@ -9,9 +11,8 @@ build flow.
 
 This is the standalone **demo/template**, not the later voxel-game experiment.
 All 35 original commits are preserved unchanged. The `legacy-demo-baseline` tag
-marks the starting point; see [the history guide](docs/HISTORY.md). No GitHub
-remote is configured yet, so this local project is ready for a separate public
-repository when its name and visibility are chosen.
+marks the starting point; see [the history guide](docs/HISTORY.md). The independent
+public repository is [sabino/3dgeo-demo](https://github.com/sabino/3dgeo-demo).
 
 GitHub Actions builds and tests pushes/PRs, provides downloadable ROM artifacts,
 and prepares draft releases for `v*` tags. See the [CI and publishing guide](docs/PUBLISHING.md)
