@@ -12,7 +12,9 @@ and manual dispatch. The `ROM and regression tests` job uses Ubuntu 24.04 to:
 5. Upload a ROM bundle, matching source snapshot, SHA-256 checksums, and diagnostics.
 
 The ROM bundle contains `rom/3dgeo_demo.zip`, GnGeo/MAME game definitions,
-documentation, license, exact revision, package versions, and file hashes.
+documentation, project and upstream SDK license notices, exact revision,
+package versions, and file hashes. Packaging also verifies that all five native
+screenshots were produced and can be decoded at the expected resolution.
 It deliberately excludes `aes.zip` and `neogeo.zip`: CI uses ngdevkit's
 open-source test BIOS, but users supply their own emulator/BIOS installation.
 The source archive is made from the exact Git revision that was built.

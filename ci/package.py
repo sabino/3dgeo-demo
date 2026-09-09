@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import subprocess
 import zipfile
+from PIL import Image
 
 
 def main():
@@ -27,6 +28,15 @@ def main():
         "docs/PUBLISHING.md": root / "docs/PUBLISHING.md",
         "toolchain.txt": build / "toolchain.txt",
     }
+    for package in ("ngdevkit", "ngdevkit-toolchain", "ngdevkit-gngeo"):
+        files[f"licenses/{package}-copyright.txt"] = Path(f"/usr/share/doc/{package}/copyright")
+    for license_name in ("GPL-2", "GPL-3", "LGPL-3"):
+        files[f"licenses/{license_name}.txt"] = Path(f"/usr/share/common-licenses/{license_name}")
+    # A passing controller replay must also leave usable visual evidence.
+    for name in ("cube", "cube-rotated", "pyramid", "light-before", "light-after"):
+        with Image.open(build / f"native-captures/{name}.png") as capture:
+            assert capture.size == (320, 224), f"Unexpected capture dimensions: {name}"
+            capture.verify()
     # Validate the cartridge itself, not just the outer archive's filenames.
     expected = {f"3dgeo_demo-{part}.{part}" for part in ("p1", "s1", "c1", "c2", "m1", "v1")}
     with zipfile.ZipFile(files["rom/3dgeo_demo.zip"]) as cart:
