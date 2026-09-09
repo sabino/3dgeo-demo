@@ -16,7 +16,7 @@ Sprites:
 
 - Draw the full 3D image.
 - Provide the 80x56 logical framebuffer.
-- Use 160 hardware sprite strips: 80 columns times 2 vertical chunks.
+- Use 320 hardware sprite strips: 80 columns times 4 vertical chunks.
 - Use C-ROM tiles as cell patterns.
 - Use sprite palette attributes as the grayscale shade selector.
 
@@ -49,17 +49,25 @@ The renderer uses:
 - Source sprite tile size: 16x16 pixels.
 - Sprite zoom: configured so each 16x16 tile displays as a 4x4 block.
 
-Each framebuffer column is represented by two vertical sprite strips. The split
-keeps every strip at 28 tiles high, below the Neo Geo 32-tile-per-sprite
-height limit:
+Each framebuffer column is represented by four vertical sprite strips. The
+first three read 16 source tiles each; the last reads eight. Their SCB3 display
+windows count units of 16 screen pixels, independently of the source tile count:
 
 ```text
-80 columns x 2 chunks = 160 sprite strips
-56 rows / 2 chunks = 28 cells per strip
+80 columns x 4 chunks = 320 sprite strips
+56 rows = 16 + 16 + 16 + 8 source tiles
+Display heights = 64 + 64 + 64 + 32 pixels
+SCB3 heights = 4 + 4 + 4 + 2 units
 ```
 
 This layout also keeps the sprite count under the visible hardware budget and
 avoids building one hardware sprite per logical pixel.
+Vertical shrinking does not shrink the SCB3 window. The historical two-band
+layout both overlapped display windows and exceeded the 16-source-tile limit
+before the L0 lookup repeats its last line. This produced missing and stretched
+faces in native captures even when the RAM framebuffer was correct. Four
+non-overlapping windows avoid both problems and leave 80 active strips per
+scanline. See the [display-window and last-line-repeat caveats](https://wiki.neogeodev.org/index.php/Sprite_shrinking).
 
 ## Tile Atlas
 
@@ -90,7 +98,7 @@ stable than trying to update fine coverage patterns for every cell.
 The ROM does not parse text OBJ files. OBJ is a source format for the build.
 
 `tools/obj_to_model.py` reads every model listed by the Makefile and emits
-`build/generated/model_data.h`. The generated header contains compact C arrays
+`build/viewer/generated/model_data.h`. The generated header contains compact C arrays
 for the Neo Geo runtime:
 
 - Fixed-point vertices.
@@ -168,10 +176,10 @@ the 68000.
 
 ## Math Model
 
-Angles use 64 steps per revolution:
+Angles use 256 steps per revolution:
 
 ```text
-0..63 -> 360 degrees
+0..255 -> 360 degrees (1.40625 degrees per step)
 ```
 
 Sine and cosine are Q8 fixed-point values:
@@ -182,6 +190,10 @@ Sine and cosine are Q8 fixed-point values:
 
 Rotation is applied in pitch, yaw, roll order. The same rotation function is
 used for vertices and normals.
+The VBlank callback advances a wrapping 16-bit clock. Input movement and
+automatic preview rotation consume elapsed ticks, not render-loop iterations.
+An eight-tick catch-up cap bounds jumps after debugger stalls. The demo supplies
+its own VBlank wait because ngdevkit's `ng_wait_vblank` owns its own callback.
 
 Projection is perspective-like but deliberately cheap:
 
@@ -209,12 +221,16 @@ Z-buffer. The renderer trades precision for speed and simplicity.
 Lighting is a stylized point-light cue:
 
 ```text
-intensity = dot(face_normal, light_position - face_center)
+plane = dot(original_normal, original_face_vertex)
+intensity = (dot(rotated_normal, light_position) - plane) / 512 + 24
 ```
 
-The intensity is scaled into 12 grayscale palette levels. A small screen-space
-row bias is added so large flat faces get more visual shape even at the coarse
-cell resolution.
+The intensity is scaled into 12 grayscale palette levels once per triangle.
+The plane offset is rotation-invariant, so coplanar triangles receive identical
+tones without rounding their transformed centroids independently. The old
+triangle-dependent screen-space row bias is removed: it introduced false seams
+across flat faces. This remains stylized lighting without normalized light
+vectors or physical distance attenuation.
 
 The `CUBE LIGHT` scene switches to a darker background, exposes the light
 position through the controller, and draws a white marker whose radius changes

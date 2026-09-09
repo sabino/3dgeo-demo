@@ -1,11 +1,17 @@
-# 3Dgeo
+# 3Dgeo Demo / Template
 
-3Dgeo is an experimental Neo Geo/ngdevkit renderer that treats the sprite
+3Dgeo is an experimental Neo Geo/ngdevkit model demo and template that treats the sprite
 hardware as a tiny grayscale framebuffer for live 3D objects. It is not a
 general game engine and it is not a finished rendering library. The goal is to
 explore how far a framebuffer-like 3D pipeline can be pushed on Neo Geo while
 still using normal cartridge assets, the 68000 CPU, and the stock ngdevkit
 build flow.
+
+This is the standalone **demo/template**, not the later voxel-game experiment.
+All 35 original commits are preserved unchanged. The `legacy-demo-baseline` tag
+marks the starting point; see [the history guide](docs/HISTORY.md). No GitHub
+remote is configured yet, so this local project is ready for a separate public
+repository when its name and visibility are chosen.
 
 The current ROM renders OBJ-derived primitive models through a sprite-backed
 80x56 logical framebuffer. Each logical cell is represented by one 16x16 C-ROM
@@ -32,12 +38,14 @@ This is research code for a public Neo Geo experiment:
 
 - ngdevkit cart build with generated `p1`, `s1`, `c1`, `c2`, `m1`, and `v1`
   ROM data.
-- Sprite microframebuffer using 160 sprite strips.
+- Sprite microframebuffer using 320 sprite strips, with 80 active per scanline.
 - FIX layer text overlay for controls and menu labels.
 - Build-time OBJ conversion into compact C arrays.
 - In-ROM picker for cube, pyramid, tetrahedron, ball, donut, cone, cylinder,
   and a cube light-control scene.
 - Per-face grayscale palette shading.
+- Seam-free coplanar face tones and 256 angular positions per revolution.
+- VBlank-timed rotation, zoom, and light movement, with bounded stall recovery.
 - Zoom, yaw, pitch, and roll controls.
 - Movable light marker in the `CUBE LIGHT` scene.
 
@@ -57,7 +65,27 @@ This repository does not include a Neo Geo BIOS, emulator, or ngdevkit itself.
 make
 ```
 
-The cart zip and hash files are written under `build/rom/`.
+The cart is `build/viewer/rom/3dgeo_demo.zip`; hash files are alongside it.
+The Makefile discovers a relocatable SDK from the compiler. Override
+`NGDEVKIT_PREFIX` if your toolchain and SDK are installed separately.
+
+## Tests
+
+```sh
+make test          # Host ASan/UBSan regressions and fixed-pose captures
+make native-test   # MAME controller replay, rotation check, and screenshots
+```
+
+Host tests need a C compiler; native tests additionally need MAME, Xvfb and
+xauth. The native test uses ngdevkit's open-source BIOS, which MAME warns does
+not match the official BIOS checksums. Captures and logs are generated under
+`build/viewer/`, not committed. Physical hardware is not yet verified.
+
+The 256-step angles improve angular resolution, not the hardware frame rate.
+At 60 Hz, rotation advances 84.375 degrees/second; elapsed ticks compensate for
+variable render time, capped at eight ticks after stalls. Real near-plane
+clipping, geometric cast shadows, and a larger renderer-module split remain
+future work. Existing shadows are deliberately screen-space approximations.
 
 ## Run
 

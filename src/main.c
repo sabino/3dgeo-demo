@@ -1,7 +1,12 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 
+#ifdef VIEWER_HOST_TEST
+#include "viewer_platform.h"
+#else
 #include <ngdevkit/neogeo.h>
 #include <ngdevkit/ng-video.h>
+#endif
+#include "viewer_core.h"
 
 #define FIX_COLS 40
 #define FIX_MAP_ROWS 32
@@ -16,13 +21,13 @@
 #define CAMERA_DISTANCE_DEFAULT 760
 #define CAMERA_DISTANCE_MIN 420
 #define CAMERA_DISTANCE_MAX 1300
-#define CAMERA_DISTANCE_STEP 18
-#define ANGLE_MASK 63
+#define CAMERA_DISTANCE_STEP 6
+#define ANGLE_MASK 255
 #define FACE_LEVELS 12
 #define CUBE_LIGHT_OPTION MODEL_COUNT
 #define PICKER_OPTION_COUNT (MODEL_COUNT + 1)
-#define LIGHT_MOVE_STEP 18
-#define LIGHT_Z_STEP 24
+#define LIGHT_MOVE_STEP 6
+#define LIGHT_Z_STEP 8
 #define DEFAULT_LIGHT_X -260
 #define DEFAULT_LIGHT_Y 260
 #define DEFAULT_LIGHT_Z -340
@@ -34,8 +39,8 @@
 #define SPRITE_SCREEN_Y_REGISTER 496
 #define SPRITE_MAX_DISPLAYABLE 381
 #define SPRITE_ZOOM_4PX_CELL 0x033f
-#define SPRITE_COLUMN_CHUNKS 2
-#define SPRITE_CHUNK_CELLS (FRAME_H / SPRITE_COLUMN_CHUNKS)
+#define SPRITE_CHUNK_CELLS 16
+#define SPRITE_COLUMN_CHUNKS ((FRAME_H + SPRITE_CHUNK_CELLS - 1) / SPRITE_CHUNK_CELLS)
 #define SPRITE_BASE_INDEX 1
 
 enum {
@@ -149,16 +154,18 @@ static Vec3 render_light = {DEFAULT_LIGHT_X, DEFAULT_LIGHT_Y, DEFAULT_LIGHT_Z};
 static Vec3 scene_light = {240, 210, -220};
 static u8 light_scene_active = 0;
 
-static const s16 sin_lut[64] = {
-       0,   25,   50,   74,   98,  121,  142,  162,
-     181,  198,  213,  226,  237,  245,  251,  255,
-     256,  255,  251,  245,  237,  226,  213,  198,
-     181,  162,  142,  121,   98,   74,   50,   25,
-       0,  -25,  -50,  -74,  -98, -121, -142, -162,
-    -181, -198, -213, -226, -237, -245, -251, -255,
-    -256, -255, -251, -245, -237, -226, -213, -198,
-    -181, -162, -142, -121,  -98,  -74,  -50,  -25,
-};
+volatile u16 viewer_vblank_ticks;
+volatile u16 viewer_render_count;
+volatile u8 viewer_debug_yaw, viewer_debug_option, viewer_debug_menu;
+void rom_callback_VBlank(void) { ++viewer_vblank_ticks; }
+static void viewer_wait_vblank(void) {
+    u16 start = viewer_vblank_ticks;
+    while (viewer_vblank_ticks == start) {
+#ifndef VIEWER_HOST_TEST
+        *REG_WATCHDOGW = 0;
+#endif
+    }
+}
 
 static inline s16 qmul(s16 a, s16 b) {
     return (s16)(((s32)a * (s32)b) >> Q);
@@ -169,7 +176,7 @@ static inline s16 sine(u8 angle) {
 }
 
 static inline s16 cosine(u8 angle) {
-    return sin_lut[(angle + 16) & ANGLE_MASK];
+    return sin_lut[(angle + 64) & ANGLE_MASK];
 }
 
 static inline u16 fix_word(u8 palette, u16 tile) {
@@ -280,6 +287,11 @@ static void clear_sprite_state(void) {
     }
 }
 
+static u8 sprite_chunk_rows(u8 chunk) {
+    u8 remaining = (u8)(FRAME_H - chunk * SPRITE_CHUNK_CELLS);
+    return remaining < SPRITE_CHUNK_CELLS ? remaining : SPRITE_CHUNK_CELLS;
+}
+
 static void init_sprite_framebuffer(void) {
     u16 blank = fix_word(PAL_PAPER, TILE_PAPER);
 
@@ -299,7 +311,10 @@ static void init_sprite_framebuffer(void) {
     *REG_VRAMMOD = 0x200;
     for (u8 chunk = 0; chunk < SPRITE_COLUMN_CHUNKS; chunk++) {
         u16 y = (u16)(chunk * SPRITE_CHUNK_CELLS * 4);
-        u16 y_word = sprite_y_word(y, SPRITE_CHUNK_CELLS);
+        /* L0 repeats the last source line beyond 16 shrunk source tiles.
+         * Use 16/16/16/8 rows, with non-overlapping 64/64/64/32px windows.
+         * SCB3 counts unshrunk 16px display-window units. */
+        u16 y_word = sprite_y_word(y, sprite_chunk_rows(chunk) / 4);
 
         for (u8 x = 0; x < FRAME_W; x++) {
             u16 sprite = (u16)(SPRITE_BASE_INDEX + chunk * FRAME_W + x);
@@ -465,18 +480,16 @@ static void sort_tris(TriOrder *order, u8 count) {
     }
 }
 
-static s16 light_for_tri_position(const ProjectedVertex *verts, const ModelTri *tri, Vec3 normal) {
-    s16 cx = 0;
-    s16 cy = 0;
-    s16 cz = 0;
-
-    cx = (s16)(((s32)verts[tri->a].x + verts[tri->b].x + verts[tri->c].x) / 3);
-    cy = (s16)(((s32)verts[tri->a].y + verts[tri->b].y + verts[tri->c].y) / 3);
-    cz = (s16)(((s32)verts[tri->a].z + verts[tri->b].z + verts[tri->c].z) / 3);
-
-    return (s16)((((s32)normal.x * (render_light.x - cx) +
-                   (s32)normal.y * (render_light.y - cy) +
-                   (s32)normal.z * (render_light.z - cz)) >> 9) + 24);
+static s16 light_for_tri_position(const ModelData *model, const ModelTri *tri, Vec3 normal) {
+    /* n.dot(p) is constant over a planar face and invariant under rotation.
+     * Its object-space value avoids independently rounded triangle centroids,
+     * so coplanar triangles share exactly one palette tone. */
+    const ModelVertex *p = &model->vertices[tri->a];
+    s32 plane = (s32)tri->normal.x * p->x + (s32)tri->normal.y * p->y +
+                (s32)tri->normal.z * p->z;
+    s32 light = (s32)normal.x * render_light.x + (s32)normal.y * render_light.y +
+                (s32)normal.z * render_light.z;
+    return (s16)(((light - plane) >> 9) + 24);
 }
 
 static void add_edge_spans(s16 left[FRAME_H], s16 right[FRAME_H],
@@ -497,7 +510,7 @@ static void add_edge_spans(s16 left[FRAME_H], s16 right[FRAME_H],
     }
 
     s16 dy = (s16)(y1 - y0);
-    s32 step = ((s32)(x1 - x0) << Q) / dy;
+    s32 step = ((s32)(x1 - x0) * ONE) / dy;
     s16 start_y = y0;
     s16 end_y = y1;
 
@@ -505,7 +518,7 @@ static void add_edge_spans(s16 left[FRAME_H], s16 right[FRAME_H],
     if (end_y > FRAME_H) end_y = FRAME_H;
     if (start_y >= end_y) return;
 
-    s32 x = ((s32)x0 << Q) + step * (start_y - y0);
+    s32 x = (s32)x0 * ONE + step * (start_y - y0);
     for (s16 y = start_y; y < end_y; y++) {
         s16 xi = (s16)(x >> Q);
 
@@ -515,7 +528,7 @@ static void add_edge_spans(s16 left[FRAME_H], s16 right[FRAME_H],
     }
 }
 
-static void fill_tri_spans(const ProjectedVertex *verts, const ModelTri *tri, Vec3 normal) {
+static void fill_tri_spans(const ProjectedVertex *verts, const ModelTri *tri, s16 intensity) {
     static s16 left[FRAME_H];
     static s16 right[FRAME_H];
     s16 min_y = FRAME_H - 1;
@@ -525,7 +538,7 @@ static void fill_tri_spans(const ProjectedVertex *verts, const ModelTri *tri, Ve
         &verts[tri->b],
         &verts[tri->c],
     };
-    s16 base = light_for_tri_position(verts, tri, normal);
+    u16 word = face_word_for_intensity(intensity);
 
     for (u8 i = 0; i < 3; i++) {
         const ProjectedVertex *v = points[i];
@@ -553,10 +566,6 @@ static void fill_tri_spans(const ProjectedVertex *verts, const ModelTri *tri, Ve
         if (x0 < 0) x0 = 0;
         if (x1 >= FRAME_W) x1 = FRAME_W - 1;
         if (x0 > x1) continue;
-
-        s16 mid = (s16)((x0 + x1) >> 1);
-        s16 row_bias = (s16)((FRAME_H / 2 - y) - ((mid - FRAME_W / 2) >> 1));
-        u16 word = face_word_for_intensity((s16)(base + row_bias));
 
         for (s16 x = x0; x <= x1; x++) {
             frame_words[y][x] = word;
@@ -658,7 +667,7 @@ static void line(s16 x0, s16 y0, s16 x1, s16 y1, u16 word) {
         put_edge(x0, y0, word);
         if (x0 == x1 && y0 == y1) break;
 
-        s16 e2 = (s16)(err << 1);
+        s16 e2 = (s16)(err * 2);
         if (e2 >= dy) {
             err = (s16)(err + dy);
             x0 = (s16)(x0 + sx);
@@ -769,7 +778,8 @@ static void render_model(const ModelData *model, u8 pitch, u8 yaw, u8 roll) {
         u8 tri_id = order[i].tri;
 
         if (normals[tri_id].z < 0) {
-            fill_tri_spans(verts, &model->tris[tri_id], normals[tri_id]);
+            fill_tri_spans(verts, &model->tris[tri_id],
+                light_for_tri_position(model, &model->tris[tri_id], normals[tri_id]));
         }
     }
 
@@ -817,7 +827,7 @@ static void blit_frame(void) {
             u16 sprite = (u16)(SPRITE_BASE_INDEX + chunk * FRAME_W + x);
 
             *REG_VRAMADDR = (u16)(ADDR_SCB1 + (sprite * 64));
-            for (u8 row = 0; row < SPRITE_CHUNK_CELLS; row++) {
+            for (u8 row = 0; row < sprite_chunk_rows(chunk); row++) {
                 u16 word = frame_words[row_base + row][x];
 
                 *REG_VRAMRW = sprite_tile(word);
@@ -827,6 +837,7 @@ static void blit_frame(void) {
     }
 
     frame_dirty = 0;
+    ++viewer_render_count;
 }
 
 static u8 read_p1_input(void) {
@@ -841,38 +852,40 @@ static u8 pressed(u8 input, u8 previous_input, u8 mask) {
     return (u8)((input & mask) && !(previous_input & mask));
 }
 
-static u8 update_controls(u8 input, u8 *pitch, u8 *yaw, u8 *roll) {
+static u8 update_controls(u8 input, u8 *pitch, u8 *yaw, u8 *roll, u16 elapsed) {
     u8 changed = 0;
 
     if (input & CNT_LEFT) {
-        *yaw = (u8)((*yaw - 1) & ANGLE_MASK);
+        *yaw = (u8)((*yaw - elapsed) & ANGLE_MASK);
         changed = 1;
     } else if (input & CNT_RIGHT) {
-        *yaw = (u8)((*yaw + 1) & ANGLE_MASK);
+        *yaw = (u8)((*yaw + elapsed) & ANGLE_MASK);
         changed = 1;
     }
     if (input & CNT_UP) {
-        *pitch = (u8)((*pitch - 1) & ANGLE_MASK);
+        *pitch = (u8)((*pitch - elapsed) & ANGLE_MASK);
         changed = 1;
     } else if (input & CNT_DOWN) {
-        *pitch = (u8)((*pitch + 1) & ANGLE_MASK);
+        *pitch = (u8)((*pitch + elapsed) & ANGLE_MASK);
         changed = 1;
     }
     if (input & CNT_A) {
-        *roll = (u8)((*roll - 1) & ANGLE_MASK);
+        *roll = (u8)((*roll - elapsed) & ANGLE_MASK);
         changed = 1;
     } else if (input & CNT_B) {
-        *roll = (u8)((*roll + 1) & ANGLE_MASK);
+        *roll = (u8)((*roll + elapsed) & ANGLE_MASK);
         changed = 1;
     }
     if (input & CNT_C) {
         if (camera_distance > CAMERA_DISTANCE_MIN) {
-            camera_distance = (s16)(camera_distance - CAMERA_DISTANCE_STEP);
+            camera_distance = (s16)(camera_distance - CAMERA_DISTANCE_STEP * elapsed);
+            if (camera_distance < CAMERA_DISTANCE_MIN) camera_distance = CAMERA_DISTANCE_MIN;
             changed = 1;
         }
     } else if (input & CNT_D) {
         if (camera_distance < CAMERA_DISTANCE_MAX) {
-            camera_distance = (s16)(camera_distance + CAMERA_DISTANCE_STEP);
+            camera_distance = (s16)(camera_distance + CAMERA_DISTANCE_STEP * elapsed);
+            if (camera_distance > CAMERA_DISTANCE_MAX) camera_distance = CAMERA_DISTANCE_MAX;
             changed = 1;
         }
     }
@@ -880,38 +893,46 @@ static u8 update_controls(u8 input, u8 *pitch, u8 *yaw, u8 *roll) {
     return changed;
 }
 
-static u8 update_light_controls(u8 input) {
+static u8 update_light_controls(u8 input, u16 elapsed) {
     u8 changed = 0;
 
     if (input & CNT_LEFT) {
-        if (scene_light.x > -320) scene_light.x = (s16)(scene_light.x - LIGHT_MOVE_STEP);
+        if (scene_light.x > -320) scene_light.x = (s16)(scene_light.x - LIGHT_MOVE_STEP * elapsed);
+        if (scene_light.x < -320) scene_light.x = -320;
         changed = 1;
     } else if (input & CNT_RIGHT) {
-        if (scene_light.x < 320) scene_light.x = (s16)(scene_light.x + LIGHT_MOVE_STEP);
+        if (scene_light.x < 320) scene_light.x = (s16)(scene_light.x + LIGHT_MOVE_STEP * elapsed);
+        if (scene_light.x > 320) scene_light.x = 320;
         changed = 1;
     }
     if (input & CNT_UP) {
-        if (scene_light.y < 260) scene_light.y = (s16)(scene_light.y + LIGHT_MOVE_STEP);
+        if (scene_light.y < 260) scene_light.y = (s16)(scene_light.y + LIGHT_MOVE_STEP * elapsed);
+        if (scene_light.y > 260) scene_light.y = 260;
         changed = 1;
     } else if (input & CNT_DOWN) {
-        if (scene_light.y > -260) scene_light.y = (s16)(scene_light.y - LIGHT_MOVE_STEP);
+        if (scene_light.y > -260) scene_light.y = (s16)(scene_light.y - LIGHT_MOVE_STEP * elapsed);
+        if (scene_light.y < -260) scene_light.y = -260;
         changed = 1;
     }
     if (input & CNT_A) {
-        if (scene_light.z > -520) scene_light.z = (s16)(scene_light.z - LIGHT_Z_STEP);
+        if (scene_light.z > -520) scene_light.z = (s16)(scene_light.z - LIGHT_Z_STEP * elapsed);
+        if (scene_light.z < -520) scene_light.z = -520;
         changed = 1;
     } else if (input & CNT_B) {
-        if (scene_light.z < 240) scene_light.z = (s16)(scene_light.z + LIGHT_Z_STEP);
+        if (scene_light.z < 240) scene_light.z = (s16)(scene_light.z + LIGHT_Z_STEP * elapsed);
+        if (scene_light.z > 240) scene_light.z = 240;
         changed = 1;
     }
     if (input & CNT_C) {
         if (camera_distance > CAMERA_DISTANCE_MIN) {
-            camera_distance = (s16)(camera_distance - CAMERA_DISTANCE_STEP);
+            camera_distance = (s16)(camera_distance - CAMERA_DISTANCE_STEP * elapsed);
+            if (camera_distance < CAMERA_DISTANCE_MIN) camera_distance = CAMERA_DISTANCE_MIN;
             changed = 1;
         }
     } else if (input & CNT_D) {
         if (camera_distance < CAMERA_DISTANCE_MAX) {
-            camera_distance = (s16)(camera_distance + CAMERA_DISTANCE_STEP);
+            camera_distance = (s16)(camera_distance + CAMERA_DISTANCE_STEP * elapsed);
+            if (camera_distance > CAMERA_DISTANCE_MAX) camera_distance = CAMERA_DISTANCE_MAX;
             changed = 1;
         }
     }
@@ -920,24 +941,28 @@ static u8 update_light_controls(u8 input) {
 }
 
 int main(void) {
-    u8 pitch = 54;
-    u8 yaw = 56;
+    u8 pitch = 216;
+    u8 yaw = 224;
     u8 roll = 0;
     u8 selected_model = 0;
     u8 menu_active = 1;
     u8 mode_input_lock = 0;
     u8 previous_input = 0;
     u8 previous_system_input = 0;
-    u8 preview_tick = 0;
 
     init_palettes();
     init_sprite_framebuffer();
     render_picker_option(selected_model, pitch, yaw, roll);
     draw_controls_overlay(menu_active, selected_model);
-    ng_wait_vblank();
+    viewer_wait_vblank();
     blit_frame();
+    u16 previous_tick = viewer_vblank_ticks;
 
     for (;;) {
+        u16 now = viewer_vblank_ticks;
+        u16 elapsed = viewer_elapsed_ticks(now, previous_tick);
+        if (!elapsed) { viewer_wait_vblank(); continue; }
+        previous_tick = now;
         u8 input = read_p1_input();
         u8 system_input = read_p1_system_input();
         u8 changed = 0;
@@ -965,12 +990,8 @@ int main(void) {
             }
 
             if (!entered_mode) {
-                preview_tick++;
-                if (preview_tick >= 4) {
-                    preview_tick = 0;
-                    yaw = (u8)((yaw + 1) & ANGLE_MASK);
-                    changed = 1;
-                }
+                yaw = (u8)((yaw + elapsed) & ANGLE_MASK);
+                changed = 1;
 
                 if (changed) {
                     render_picker_option(selected_model, pitch, yaw, roll);
@@ -988,19 +1009,15 @@ int main(void) {
                 render_picker_option(selected_model, pitch, yaw, roll);
                 draw_controls_overlay(menu_active, selected_model);
             } else if (selected_model == CUBE_LIGHT_OPTION) {
-                if (update_light_controls(input)) {
+                if (update_light_controls(input, elapsed)) {
                     changed = 1;
                 }
-                preview_tick++;
-                if (preview_tick >= 4) {
-                    preview_tick = 0;
-                    yaw = (u8)((yaw + 1) & ANGLE_MASK);
-                    changed = 1;
-                }
+                yaw = (u8)((yaw + elapsed) & ANGLE_MASK);
+                changed = 1;
                 if (changed) {
                     render_light_model(pitch, yaw, roll);
                 }
-            } else if (update_controls(input, &pitch, &yaw, &roll)) {
+            } else if (update_controls(input, &pitch, &yaw, &roll, elapsed)) {
                 changed = 1;
                 render_regular_model(selected_model, pitch, yaw, roll);
             }
@@ -1008,7 +1025,10 @@ int main(void) {
 
         previous_input = input;
         previous_system_input = system_input;
-        ng_wait_vblank();
+        viewer_debug_yaw = yaw;
+        viewer_debug_option = selected_model;
+        viewer_debug_menu = menu_active;
+        viewer_wait_vblank();
         blit_frame();
     }
 

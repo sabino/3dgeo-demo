@@ -1,10 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 PROJECT := 3dgeo
-GAMEROM := 3dgeo
-GAMETITLE := 3Dgeo sprite microframebuffer
+GAMEROM ?= 3dgeo_demo
+GAMETITLE ?= 3Dgeo Demo / Template
 
-BUILDDIR := build
+BUILDDIR ?= build/viewer
+VIEWER_CAPTURE_DIR ?= $(BUILDDIR)/captures
 ROM := $(BUILDDIR)/rom
 ASSETDIR := $(BUILDDIR)/assets
 GENERATEDDIR := $(BUILDDIR)/generated
@@ -22,14 +23,16 @@ ROMTOOL ?= romtool.py
 GNGEO ?= ngdevkit-gngeo
 GNGEO_P1CONTROL ?= A=K122,B=K120,C=K97,D=K115,START=K49,COIN=K51,UP=K82,DOWN=K81,LEFT=K80,RIGHT=K79,MENU=K27
 
-NGCFLAGS := $(shell $(PKGCONFIG) --cflags ngdevkit 2>/dev/null)
-NGLDFLAGS := $(shell $(PKGCONFIG) --libs ngdevkit 2>/dev/null)
-NGSHAREDIR := $(shell $(PKGCONFIG) --variable=sharedir ngdevkit 2>/dev/null)
-GNGEO_DATA := /usr/share/ngdevkit-gngeo/gngeo_data.zip
+NGDEVKIT_PREFIX ?= $(shell dirname "$$(dirname "$$(readlink -f "$$(command -v $(M68KGCC) 2>/dev/null)")")")
+NGPKGCONFIG = PKG_CONFIG_PATH="$(NGDEVKIT_PREFIX)/lib/pkgconfig:$(NGDEVKIT_PREFIX)/share/pkgconfig:$(PKG_CONFIG_PATH)" $(PKGCONFIG)
+NGCFLAGS := $(shell $(NGPKGCONFIG) --cflags ngdevkit 2>/dev/null)
+NGLDFLAGS := $(shell $(NGPKGCONFIG) --libs ngdevkit 2>/dev/null)
+NGSHAREDIR := $(shell $(NGPKGCONFIG) --variable=sharedir ngdevkit 2>/dev/null)
+GNGEO_DATA ?= $(NGSHAREDIR)/../ngdevkit-gngeo/gngeo_data.zip
 
-CFLAGS ?= -std=c99 -fomit-frame-pointer -O2 -g -Wall -Wextra
-CFLAGS += $(NGCFLAGS) -Isrc -I$(GENERATEDDIR)
-LDFLAGS += $(NGLDFLAGS)
+CFLAGS ?= -std=c99 -fomit-frame-pointer -O3 -flto -g -Wall -Wextra
+CFLAGS += $(NGCFLAGS) -Isrc -I$(GENERATEDDIR) -MMD -MP
+LDFLAGS += $(NGLDFLAGS) -O3 -flto
 
 PROMSIZE := 1048576
 SROMSIZE := 131072
@@ -48,7 +51,7 @@ CART := $(ROM)/$(GAMEROM).zip
 GNGEO_HASH := $(ROM)/gngeo_data.zip
 MAME_HASH := $(ROM)/neogeo.xml
 
-.PHONY: all cart assets check-ngdevkit gngeo run clean distclean FORCE
+.PHONY: all cart assets check-ngdevkit gngeo run test hosttest native-test
 
 all: cart
 
@@ -58,7 +61,7 @@ check-ngdevkit:
 	@command -v $(M68KGCC) >/dev/null 2>&1 || { echo "missing $(M68KGCC)"; exit 1; }
 	@command -v $(TILETOOL) >/dev/null 2>&1 || { echo "missing $(TILETOOL)"; exit 1; }
 	@command -v $(ROMTOOL) >/dev/null 2>&1 || { echo "missing $(ROMTOOL)"; exit 1; }
-	@$(PKGCONFIG) --exists ngdevkit || { echo "pkg-config cannot find ngdevkit"; exit 1; }
+	@$(NGPKGCONFIG) --exists ngdevkit || { echo "pkg-config cannot find ngdevkit; set NGDEVKIT_PREFIX"; exit 1; }
 	@test -f "$(NGSHAREDIR)/nullsound_driver.ihx" || { echo "missing ngdevkit nullsound_driver.ihx"; exit 1; }
 
 assets: $(SROM1)
@@ -66,10 +69,10 @@ assets: $(SROM1)
 $(BUILDDIR) $(ROM) $(ASSETDIR) $(GENERATEDDIR):
 	mkdir -p $@
 
-$(PRIMITIVE_OBJS): tools/make_primitive_objs.py
+$(PRIMITIVE_OBJS) &: tools/make_primitive_objs.py
 	$(PYTHON) tools/make_primitive_objs.py
 
-$(MODEL_DATA): FORCE tools/obj_to_model.py $(MODEL_OBJS) | $(GENERATEDDIR)
+$(MODEL_DATA): tools/obj_to_model.py $(MODEL_OBJS) | $(GENERATEDDIR)
 	$(PYTHON) tools/obj_to_model.py $(MODEL_OBJS) $@
 
 $(ASSETDIR)/shade-fix.gif: tools/make_fix_tiles.py | $(ASSETDIR)
@@ -84,14 +87,14 @@ $(ASSETDIR)/shade-sprite.gif: tools/make_sprite_tiles.py | $(ASSETDIR)
 $(ASSETDIR)/shade-sprite.c1 $(ASSETDIR)/shade-sprite.c2 &: $(ASSETDIR)/shade-sprite.gif
 	$(TILETOOL) --sprite -c $< -o $(ASSETDIR)/shade-sprite.c1 $(ASSETDIR)/shade-sprite.c2 -s $(CROMSIZE)
 
-$(BUILDDIR)/main.o: $(MODEL_DATA)
+$(BUILDDIR)/main.o: $(MODEL_DATA) src/viewer_core.h
 
 $(BUILDDIR)/%.o: src/%.c | $(BUILDDIR)
 	mkdir -p $(dir $@)
 	$(M68KGCC) $(CFLAGS) -c $< -o $@
 
 $(ELF): $(BUILDDIR)/main.o
-	$(M68KGCC) -o $@ $^ $(LDFLAGS)
+	$(M68KGCC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 $(PROM1): $(ELF) | $(ROM)
 	$(M68KOBJCOPY) -O binary -S -R .text2 --gap-fill 0xff --pad-to $(PROMSIZE) $< $@
@@ -133,10 +136,24 @@ $(ROM)/neogeo.zip: | $(ROM)
 	cp "$(NGSHAREDIR)/neogeo.zip" $@
 
 gngeo run: cart $(ROM)/neogeo.zip
-	$(GNGEO) --scale 3 --no-resize --system home --p1control="$(GNGEO_P1CONTROL)" -i $(ROM) -d $(GNGEO_HASH) $(GAMEROM)
+	$(GNGEO) --scale 3 --screen320 --no-resize --system home --p1control="$(GNGEO_P1CONTROL)" -i $(ROM) -d $(GNGEO_HASH) $(GAMEROM)
 
-clean:
-	find $(BUILDDIR) -type f \( -name '*.o' -o -name '*.elf' -o -name '*.ihx' -o -name '*.rel' \) -delete 2>/dev/null || true
+hosttest: $(MODEL_DATA) tests/test_viewer.c tests/viewer_platform.h src/main.c src/viewer_core.h | $(BUILDDIR)
+	cc -std=c99 -O2 -g -fsanitize=address,undefined -DVIEWER_HOST_TEST -Itests -Isrc -I$(GENERATEDDIR) tests/test_viewer.c -o $(BUILDDIR)/viewer-host-test
+test: hosttest
+	mkdir -p "$(VIEWER_CAPTURE_DIR)"
+	VIEWER_CAPTURE_DIR="$(VIEWER_CAPTURE_DIR)" UBSAN_OPTIONS=halt_on_error=1 $(BUILDDIR)/viewer-host-test
 
-distclean:
-	rm -rf $(BUILDDIR)
+$(ROM)/aes.zip: | $(ROM)
+	cp "$(NGSHAREDIR)/aes.zip" $@
+
+native-test: cart $(ROM)/aes.zip
+	mkdir -p "$${VIEWER_CAPTURE_DIR:-$(BUILDDIR)/native-captures}"
+	xvfb-run -a env VIEWER_ELF="$(ELF)" VIEWER_CAPTURE_DIR="$${VIEWER_CAPTURE_DIR:-$(BUILDDIR)/native-captures}" SDL_VIDEODRIVER=x11 SDL_AUDIODRIVER=dummy \
+		mame aes -cart $(GAMEROM) -rompath $(ROM) -hashpath $(ROM) \
+		-video soft -sound none -window -skip_gameinfo -noplugins -seconds_to_run 16 \
+		-nothrottle -autoboot_delay 0 -autoboot_script tools/viewer_probe.lua \
+		-snapshot_directory "$${VIEWER_CAPTURE_DIR:-$(BUILDDIR)/native-captures}" > $(BUILDDIR)/native-test.log 2>&1
+	grep -q '^VIEWER PASS:' $(BUILDDIR)/native-test.log
+
+-include $(BUILDDIR)/main.d
