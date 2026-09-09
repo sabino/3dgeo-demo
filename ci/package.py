@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Package an explicit allowlist, never the ROM directory (which has test BIOSes)."""
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: Apache-2.0
 import hashlib
 import json
 from pathlib import Path
@@ -23,9 +23,11 @@ def main():
         "rom/neogeo.xml": build / "rom/neogeo.xml",
         "README.md": root / "README.md",
         "LICENSE": root / "LICENSE",
+        "NOTICE": root / "NOTICE",
         "TECHNICAL_EXPLANATION.md": root / "TECHNICAL_EXPLANATION.md",
         "docs/HISTORY.md": root / "docs/HISTORY.md",
         "docs/PUBLISHING.md": root / "docs/PUBLISHING.md",
+        "docs/LICENSING.md": root / "docs/LICENSING.md",
         "toolchain.txt": build / "toolchain.txt",
     }
     for package in ("ngdevkit", "ngdevkit-toolchain", "ngdevkit-gngeo"):

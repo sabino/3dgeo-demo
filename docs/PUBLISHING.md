@@ -86,7 +86,8 @@ Ordinary branches, pull requests, and `legacy-demo-baseline` never create releas
 If rerunning an already successful tag workflow, delete its draft first or use
 a new version tag; the workflow intentionally does not overwrite release assets.
 
-The demo is GPL-3.0-or-later. Keep its license and matching source available
-alongside binaries. ngdevkit's runtime/nullsound components come from the SDK;
-retain upstream licensing information and review redistribution requirements
-before publishing a release. Do not distribute proprietary BIOS or game ROMs.
+Project-owned code is Apache-2.0: keep LICENSE and the readable NOTICE credit
+with distributions. CI also supplies matching source as a project practice,
+not a requirement to disclose every downstream game's source. SDK components
+retain separate licensing obligations; see [LICENSING.md](LICENSING.md).
+Do not distribute proprietary BIOS or game ROMs.

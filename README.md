@@ -168,5 +168,10 @@ For the full technical walkthrough, read
 
 ## License
 
-This project is released under the GNU General Public License v3.0 or later
-(`GPL-3.0-or-later`). See [`LICENSE`](LICENSE).
+Project-owned code, models, and documentation are licensed under **Apache-2.0**.
+Commercial and closed-source games are allowed. Retain the readable attribution
+in [`NOTICE`](NOTICE), for example in your game's credits, accompanying manual,
+or a bundled notices file. An in-game credit is encouraged, not mandatory.
+
+See [`LICENSE`](LICENSE) and the [commercial-use and attribution guide](docs/LICENSING.md).
+Third-party SDK/runtime components retain their own licensing obligations.

@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-3.0-or-later */
+/* SPDX-License-Identifier: Apache-2.0 */
 #ifndef GEO_VIEWER_CORE_H
 #define GEO_VIEWER_CORE_H
 #include <stdint.h>

@@ -34,7 +34,10 @@ Useful checkout points for studying the original experiments:
 No commits were squashed, cherry-picked away, or rewritten. The full progression
 is useful historical evidence, including abandoned FIX paths and intermediate
 fixes; older code remains discoverable through Git without cluttering the live
-template. The GPL-3.0-or-later license and original authorship are retained.
+template. Historical GPL-3.0-or-later notices and original authorship are
+preserved in those commits. The owner subsequently relicensed the current
+project-owned code under Apache-2.0 with a readable NOTICE attribution; see
+[LICENSING.md](LICENSING.md). Historical grants are not revoked.
 
 The current work focuses on consistent face lighting and time-based rotation
 at the native vblank cadence: at 60 Hz, manual rotation is one angle unit per tick
